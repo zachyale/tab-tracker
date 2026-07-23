@@ -1,4 +1,9 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+  SelectHTMLAttributes,
+} from "react";
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
@@ -43,6 +48,33 @@ export function Input({
     <label className="block text-sm">
       <span className="mb-1 block font-medium text-stone-700">{label}</span>
       {input}
+    </label>
+  );
+}
+
+export function Select({
+  label,
+  options,
+  className = "",
+  ...props
+}: SelectHTMLAttributes<HTMLSelectElement> & { label?: string; options: string[] }) {
+  const select = (
+    <select
+      {...props}
+      className={`w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-300/50 ${className}`}
+    >
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+  if (!label) return select;
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block font-medium text-stone-700">{label}</span>
+      {select}
     </label>
   );
 }

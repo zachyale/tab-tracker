@@ -9,8 +9,9 @@ import {
   type Member,
   type Option,
 } from "../lib/api";
+import { useConfig } from "../App";
 import { balanceLabel, money, timeAgo } from "../lib/format";
-import { Button, Card, ErrorNote, Input, Spinner } from "../components/ui";
+import { Button, Card, ErrorNote, Input, Select, Spinner } from "../components/ui";
 
 type Tab = "members" | "activity" | "options" | "settings";
 
@@ -589,6 +590,7 @@ function SettingsTab({
   onSaved: () => void;
 }) {
   const navigate = useNavigate();
+  const config = useConfig();
   const [name, setName] = useState(data.account.name);
   const [description, setDescription] = useState(data.account.description);
   const [newSlug, setNewSlug] = useState(data.account.slug);
@@ -681,12 +683,11 @@ function SettingsTab({
             value={newSlug}
             onChange={(e) => setNewSlug(e.target.value.toLowerCase())}
           />
-          <Input
+          <Select
             label="Currency"
-            required
-            maxLength={3}
+            options={config.currencies}
             value={currency}
-            onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+            onChange={(e) => setCurrency(e.target.value)}
           />
           <div className="flex items-center gap-3">
             <Button type="submit">Save</Button>

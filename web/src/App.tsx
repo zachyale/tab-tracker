@@ -8,6 +8,7 @@ import Signup from "./pages/Signup";
 import NewAccount from "./pages/NewAccount";
 import AccountPage from "./pages/AccountPage";
 import ManagePage from "./pages/ManagePage";
+import AdminPage from "./pages/AdminPage";
 import { ForgotPassword, ResetPassword } from "./pages/PasswordReset";
 
 const DEFAULT_CONFIG: InstanceConfig = {
@@ -16,6 +17,8 @@ const DEFAULT_CONFIG: InstanceConfig = {
   oidc: null,
   smtp: false,
   defaultAuthMethod: "password",
+  currencies: ["CAD", "USD", "EUR", "GBP"],
+  defaultCurrency: "CAD",
 };
 
 const ConfigContext = createContext<InstanceConfig>(DEFAULT_CONFIG);
@@ -38,6 +41,11 @@ function Header() {
         </Link>
         {session?.user ? (
           <div className="flex items-center gap-3 text-sm">
+            {(session.user as { role?: string }).role === "admin" && (
+              <Link to="/admin" className="text-amber-200/80 underline hover:text-amber-100">
+                Admin
+              </Link>
+            )}
             <span className="hidden text-amber-200/80 sm:inline">{session.user.name}</span>
             <button
               onClick={() => void signOut().then(() => navigate("/login"))}
@@ -77,6 +85,7 @@ export default function App() {
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/admin" element={<AdminPage />} />
             <Route path="/accounts/new" element={<NewAccount />} />
             <Route path="/accounts/:slug" element={<AccountPage />} />
             <Route path="/accounts/:slug/manage" element={<ManagePage />} />
