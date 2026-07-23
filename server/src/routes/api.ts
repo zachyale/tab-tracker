@@ -11,6 +11,13 @@ import {
   latestUndoableDrink,
   quantitiesForUser,
 } from "../lib/ledger.js";
+import {
+  getInstanceNotificationSettings,
+  getUserNotificationPref,
+  notifyIfCrossed,
+  setInstanceNotificationSettings,
+  setUserNotificationPref,
+} from "../lib/notifications.js";
 
 type TabAccount = typeof schema.tabAccounts.$inferSelect;
 
@@ -24,6 +31,10 @@ const api = new Hono<{ Variables: Vars }>();
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,48}[a-z0-9])?$/;
 const RESERVED_SLUGS = new Set(["new", "api", "assets", "login", "signup", "admin"]);
+
+// Decimal (cent-based) currencies only — the ledger stores integer cents.
+export const CURRENCIES = ["CAD", "USD", "EUR", "GBP", "AUD", "NZD", "CHF", "SEK", "NOK", "DKK"] as const;
+const DEFAULT_CURRENCY = "CAD";
 
 function now(): Date {
   return new Date();
@@ -87,10 +98,48 @@ api.get("/config", (c) =>
     oidc: oidcEnabled ? { name: env.oidc.name } : null,
     smtp: smtpEnabled,
     defaultAuthMethod: env.defaultAuthMethod,
+    currencies: CURRENCIES,
+    defaultCurrency: DEFAULT_CURRENCY,
   })
 );
 
 api.get("/me", (c) => c.json({ user: c.get("user") }));
+
+// ---------------------------------------------------------------------------
+// Notification settings: instance defaults (admin-managed) + per-user prefs
+// ---------------------------------------------------------------------------
+
+const triggersSchema = z
+  .array(z.number().int().positive("Trigger amounts must be positive"))
+  .max(20, "Too many trigger amounts")
+  .transform((arr) => [...new Set(arr)].sort((a, b) => a - b));
+
+api.get("/notification-settings", (c) => {
+  const user = requireUser(c);
+  return c.json({
+    smtpEnabled,
+    instance: getInstanceNotificationSettings(),
+    mine: getUserNotificationPref(user.id),
+  });
+});
+
+api.put("/notification-settings", async (c) => {
+  const user = requireUser(c);
+  const body = z
+    .object({ enabled: z.boolean(), triggersCents: triggersSchema.nullable() })
+    .parse(await c.req.json());
+  setUserNotificationPref(user.id, body);
+  return c.json({ mine: getUserNotificationPref(user.id) });
+});
+
+api.put("/admin/notification-settings", async (c) => {
+  requireAdmin(c);
+  const body = z
+    .object({ enabled: z.boolean(), triggersCents: triggersSchema })
+    .parse(await c.req.json());
+  setInstanceNotificationSettings(body);
+  return c.json({ instance: getInstanceNotificationSettings() });
+});
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -165,7 +214,7 @@ const accountBodySchema = z.object({
     .toLowerCase()
     .regex(SLUG_RE, "Slug must be 2-50 chars: lowercase letters, numbers, hyphens")
     .refine((s) => !RESERVED_SLUGS.has(s), "That slug is reserved"),
-  currency: z.string().trim().toUpperCase().length(3, "Currency must be a 3-letter code"),
+  currency: z.enum(CURRENCIES).default(DEFAULT_CURRENCY),
 });
 
 api.post("/accounts", async (c) => {
@@ -221,6 +270,12 @@ function requireManager(c: Ctx): SessionUser {
 function requireOwner(c: Ctx): SessionUser {
   const user = requireUser(c);
   if (c.get("account").ownerId !== user.id) throw new AuthError(403, "Owner access required");
+  return user;
+}
+
+function requireAdmin(c: Ctx): SessionUser {
+  const user = requireUser(c);
+  if (user.role !== "admin") throw new AuthError(403, "Instance admin access required");
   return user;
 }
 
@@ -455,6 +510,8 @@ api.post("/accounts/:slug/entries", async (c) => {
   if (option.archived && body.action === "increment")
     return c.json({ error: "That option has been archived" }, 409);
 
+  const preBalance = balanceForUser(account.id, targetUserId).balanceCents;
+
   if (body.action === "increment") {
     db.insert(schema.entries)
       .values({
@@ -468,6 +525,12 @@ api.post("/accounts/:slug/entries", async (c) => {
         createdAt: now(),
       })
       .run();
+    notifyIfCrossed(
+      account.id,
+      targetUserId,
+      preBalance,
+      balanceForUser(account.id, targetUserId).balanceCents
+    );
   } else {
     const drink = latestUndoableDrink(account.id, targetUserId, option.id);
     if (!drink) return c.json({ error: "Nothing to undo for this option" }, 409);
@@ -543,6 +606,7 @@ api.post("/accounts/:slug/charges", async (c) => {
     })
     .parse(await c.req.json());
 
+  const preBalance = balanceForUser(account.id, body.userId).balanceCents;
   db.insert(schema.entries)
     .values({
       id: nanoid(),
@@ -556,7 +620,9 @@ api.post("/accounts/:slug/charges", async (c) => {
     })
     .run();
 
-  return c.json(balanceForUser(account.id, body.userId));
+  const post = balanceForUser(account.id, body.userId);
+  notifyIfCrossed(account.id, body.userId, preBalance, post.balanceCents);
+  return c.json(post);
 });
 
 // ---------------------------------------------------------------------------
