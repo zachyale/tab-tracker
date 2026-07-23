@@ -11,6 +11,12 @@ export const user = sqliteTable("user", {
   emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
   image: text("image"),
   role: text("role").notNull().default("user"),
+  // Ghost members: manager-created placeholders that can't log in. Their email
+  // is a synthetic @ghost.invalid address; claimEmail is the real person's
+  // email, matched on signup to hand the tab over.
+  isGhost: integer("is_ghost", { mode: "boolean" }).notNull().default(false),
+  claimEmail: text("claim_email"),
+  ghostAccountId: text("ghost_account_id"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
@@ -107,6 +113,7 @@ export const options = sqliteTable(
 //   drink   — one unit consumed; amountCents = unit price at that moment (null if unpriced)
 //   undo    — reverses one specific drink entry; amountCents copied from it
 //   payment — money received against the balance; amountCents = payment amount
+//   charge  — arbitrary amount added to the balance (backfill, breakage, etc.)
 export const entries = sqliteTable(
   "entry",
   {
@@ -122,7 +129,7 @@ export const entries = sqliteTable(
     actorId: text("actor_id")
       .notNull()
       .references(() => user.id),
-    kind: text("kind", { enum: ["drink", "undo", "payment"] }).notNull(),
+    kind: text("kind", { enum: ["drink", "undo", "payment", "charge"] }).notNull(),
     optionId: text("option_id").references(() => options.id),
     amountCents: integer("amount_cents"),
     note: text("note"),

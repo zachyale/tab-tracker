@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth } from "better-auth/plugins";
-import { count } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { db, schema } from "./db/index.js";
 import { env, googleEnabled, oidcEnabled, smtpEnabled } from "./env.js";
 import { sendMail } from "./mailer.js";
@@ -35,6 +35,27 @@ export const auth = betterAuth({
           // The first user to register becomes the instance admin.
           const first = await isFirstUser();
           return { data: { ...u, role: first ? "admin" : "user" } };
+        },
+        after: async (u) => {
+          // Claim ghost members: reassign any ghost tab whose claim email
+          // matches the new user's email, then remove the ghost.
+          const ghosts = db
+            .select()
+            .from(schema.user)
+            .where(
+              and(
+                eq(schema.user.isGhost, true),
+                eq(schema.user.claimEmail, u.email.toLowerCase())
+              )
+            )
+            .all();
+          for (const ghost of ghosts) {
+            db.update(schema.entries)
+              .set({ userId: u.id })
+              .where(eq(schema.entries.userId, ghost.id))
+              .run();
+            db.delete(schema.user).where(eq(schema.user.id, ghost.id)).run();
+          }
         },
       },
     },
