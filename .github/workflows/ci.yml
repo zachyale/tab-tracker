@@ -16,3 +16,30 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # Publishes badges/coverage.json to the `badges` branch, which the README's
+  # shields.io endpoint badge reads.
+  coverage:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:coverage -w server
+      - name: Build coverage badge JSON
+        run: |
+          PCT=$(node -e "console.log(require('./server/coverage/coverage-summary.json').total.lines.pct.toFixed(1))")
+          COLOR=$(node -e "const p=$PCT; console.log(p>=90?'brightgreen':p>=80?'green':p>=70?'yellowgreen':p>=60?'yellow':'orange')")
+          mkdir -p badge
+          echo "{\"schemaVersion\":1,\"label\":\"coverage\",\"message\":\"${PCT}%\",\"color\":\"${COLOR}\"}" > badge/coverage.json
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: badges
+          publish_dir: ./badge
