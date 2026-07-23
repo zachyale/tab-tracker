@@ -3,13 +3,14 @@ import { db } from "../db/index.js";
 
 export type Balance = { balanceCents: number; unpricedCount: number };
 
-// balance = consumes − undos − payments, at prices recorded on each entry.
-// Unpriced entries carry no amount; they're surfaced as a separate item count.
+// balance = consumption + charges − undos − payments, at amounts recorded on each
+// entry. Unpriced entries carry no amount; they're surfaced as a separate count.
 const BALANCE_EXPR = sql`
   COALESCE(SUM(CASE
     WHEN kind = 'consume' THEN COALESCE(amount_cents, 0)
     WHEN kind = 'undo' THEN -COALESCE(amount_cents, 0)
     WHEN kind = 'payment' THEN -amount_cents
+    WHEN kind = 'charge' THEN amount_cents
   END), 0)`;
 
 const UNPRICED_EXPR = sql`

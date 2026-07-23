@@ -532,6 +532,144 @@ api.post("/accounts/:slug/payments", async (c) => {
   return c.json(balanceForUser(account.id, body.userId));
 });
 
+api.post("/accounts/:slug/charges", async (c) => {
+  const me = requireManager(c);
+  const account = c.get("account");
+  const body = z
+    .object({
+      userId: z.string(),
+      amountCents: z.number().int().positive("Charge must be a positive amount"),
+      note: z.string().trim().max(500).optional(),
+    })
+    .parse(await c.req.json());
+
+  db.insert(schema.entries)
+    .values({
+      id: nanoid(),
+      accountId: account.id,
+      userId: body.userId,
+      actorId: me.id,
+      kind: "charge",
+      amountCents: body.amountCents,
+      note: body.note,
+      createdAt: now(),
+    })
+    .run();
+
+  return c.json(balanceForUser(account.id, body.userId));
+});
+
+// ---------------------------------------------------------------------------
+// Ghost members: placeholders for people who haven't registered yet. Their
+// tab is claimed automatically when someone signs up with the claim email.
+// ---------------------------------------------------------------------------
+
+const ghostBodySchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(100),
+  email: z.string().trim().toLowerCase().email().nullable().optional(),
+});
+
+function findGhost(accountId: string, userId: string) {
+  return db
+    .select()
+    .from(schema.user)
+    .where(
+      and(
+        eq(schema.user.id, userId),
+        eq(schema.user.isGhost, true),
+        eq(schema.user.ghostAccountId, accountId)
+      )
+    )
+    .get();
+}
+
+api.post("/accounts/:slug/ghosts", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const body = ghostBodySchema.parse(await c.req.json());
+
+  if (body.email) {
+    const existing = db
+      .select()
+      .from(schema.user)
+      .where(eq(schema.user.email, body.email))
+      .get();
+    if (existing)
+      return c.json(
+        { error: "That email already has an account — adjust their tab directly" },
+        409
+      );
+  }
+
+  const id = nanoid();
+  db.insert(schema.user)
+    .values({
+      id,
+      name: body.name,
+      email: `ghost-${id}@ghost.invalid`,
+      emailVerified: false,
+      role: "user",
+      isGhost: true,
+      claimEmail: body.email ?? null,
+      ghostAccountId: account.id,
+      createdAt: now(),
+      updatedAt: now(),
+    })
+    .run();
+  return c.json({ id }, 201);
+});
+
+api.patch("/accounts/:slug/ghosts/:userId", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const ghost = findGhost(account.id, c.req.param("userId"));
+  if (!ghost) return c.json({ error: "Ghost member not found" }, 404);
+  const body = ghostBodySchema.partial().parse(await c.req.json());
+  db.update(schema.user)
+    .set({
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.email !== undefined ? { claimEmail: body.email } : {}),
+      updatedAt: now(),
+    })
+    .where(eq(schema.user.id, ghost.id))
+    .run();
+  return c.json({ ok: true });
+});
+
+// Manually merge a ghost's tab into an existing registered user — for when
+// automatic claiming can't work (e.g. they signed up via OAuth with a
+// different email than the manager expected).
+api.post("/accounts/:slug/ghosts/:userId/link", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const ghost = findGhost(account.id, c.req.param("userId"));
+  if (!ghost) return c.json({ error: "Ghost member not found" }, 404);
+
+  const { email } = z
+    .object({ email: z.string().trim().toLowerCase().email() })
+    .parse(await c.req.json());
+  const target = db.select().from(schema.user).where(eq(schema.user.email, email)).get();
+  if (!target) return c.json({ error: "No registered user with that email" }, 404);
+  if (target.isGhost) return c.json({ error: "Cannot link one ghost to another" }, 409);
+
+  db.update(schema.entries)
+    .set({ userId: target.id })
+    .where(eq(schema.entries.userId, ghost.id))
+    .run();
+  db.delete(schema.user).where(eq(schema.user.id, ghost.id)).run();
+  return c.json({ ok: true, linkedTo: { id: target.id, name: target.name } });
+});
+
+api.delete("/accounts/:slug/ghosts/:userId", (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const ghost = findGhost(account.id, c.req.param("userId"));
+  if (!ghost) return c.json({ error: "Ghost member not found" }, 404);
+  db.delete(schema.entries).where(eq(schema.entries.userId, ghost.id)).run();
+  db.delete(schema.user).where(eq(schema.user.id, ghost.id)).run();
+  return c.json({ ok: true });
+});
+
 // ---------------------------------------------------------------------------
 // Members, activity, export
 // ---------------------------------------------------------------------------
@@ -544,17 +682,29 @@ api.get("/accounts/:slug/members", (c) => {
     FROM entry WHERE account_id = ${account.id}
     GROUP BY user_id
   `);
-  const members = memberRows
-    .map((m) => {
-      const u = db.select().from(schema.user).where(eq(schema.user.id, m.userId)).get();
+  const lastActivity = new Map(memberRows.map((m) => [m.userId, m.lastActivity]));
+
+  // Ghosts belong to the list even before any entries are recorded.
+  const ghostRows = db
+    .select()
+    .from(schema.user)
+    .where(and(eq(schema.user.isGhost, true), eq(schema.user.ghostAccountId, account.id)))
+    .all();
+  const memberIds = new Set([...lastActivity.keys(), ...ghostRows.map((g) => g.id)]);
+
+  const members = [...memberIds]
+    .map((userId) => {
+      const u = db.select().from(schema.user).where(eq(schema.user.id, userId)).get();
       if (!u) return null;
       return {
         id: u.id,
         name: u.name,
-        email: u.email,
-        lastActivity: m.lastActivity,
-        quantities: quantitiesForUser(account.id, u.id),
-        ...balanceForUser(account.id, u.id),
+        email: u.isGhost ? null : u.email,
+        isGhost: u.isGhost,
+        claimEmail: u.isGhost ? u.claimEmail : null,
+        lastActivity: lastActivity.get(userId) ?? u.createdAt.getTime(),
+        quantities: quantitiesForUser(account.id, userId),
+        ...balanceForUser(account.id, userId),
       };
     })
     .filter((m): m is NonNullable<typeof m> => !!m)

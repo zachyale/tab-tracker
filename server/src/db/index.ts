@@ -7,8 +7,11 @@ const sqlite = new Database(env.dbPath);
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
 
-// v1 bootstrap: idempotent schema creation on startup. When the schema evolves,
-// replace with numbered migrations keyed off the user_version pragma.
+// Idempotent bootstrap creates the LATEST schema; the numbered migrations
+// below (keyed off the user_version pragma) upgrade databases created by
+// older versions. Bump SCHEMA_VERSION whenever either changes.
+const SCHEMA_VERSION = 1;
+
 sqlite.exec(`
 CREATE TABLE IF NOT EXISTS user (
   id TEXT PRIMARY KEY,
@@ -17,6 +20,9 @@ CREATE TABLE IF NOT EXISTS user (
   email_verified INTEGER NOT NULL DEFAULT 0,
   image TEXT,
   role TEXT NOT NULL DEFAULT 'user',
+  is_ghost INTEGER NOT NULL DEFAULT 0,
+  claim_email TEXT,
+  ghost_account_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -90,7 +96,7 @@ CREATE TABLE IF NOT EXISTS entry (
   account_id TEXT NOT NULL REFERENCES tab_account(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES user(id),
   actor_id TEXT NOT NULL REFERENCES user(id),
-  kind TEXT NOT NULL CHECK (kind IN ('consume','undo','payment')),
+  kind TEXT NOT NULL CHECK (kind IN ('consume','undo','payment','charge')),
   option_id TEXT REFERENCES option(id),
   amount_cents INTEGER,
   note TEXT,
@@ -100,6 +106,61 @@ CREATE TABLE IF NOT EXISTS entry (
 CREATE INDEX IF NOT EXISTS entry_account_idx ON entry(account_id);
 CREATE INDEX IF NOT EXISTS entry_account_user_idx ON entry(account_id, user_id);
 `);
+
+// ---------------------------------------------------------------------------
+// Migrations for databases created before the current schema version.
+// Fresh databases already have the latest shape from the bootstrap above.
+// ---------------------------------------------------------------------------
+
+const version = sqlite.pragma("user_version", { simple: true }) as number;
+
+if (version < 1) {
+  const userCols = (
+    sqlite.prepare("SELECT name FROM pragma_table_info('user')").all() as { name: string }[]
+  ).map((r) => r.name);
+  if (!userCols.includes("is_ghost")) {
+    sqlite.exec(`
+      ALTER TABLE user ADD COLUMN is_ghost INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE user ADD COLUMN claim_email TEXT;
+      ALTER TABLE user ADD COLUMN ghost_account_id TEXT;
+    `);
+  }
+
+  // Rebuild entry to widen the kind CHECK constraint to include 'charge'.
+  const entrySql =
+    (
+      sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entry'")
+        .get() as { sql: string } | undefined
+    )?.sql ?? "";
+  if (!entrySql.includes("'charge'")) {
+    sqlite.pragma("foreign_keys = OFF");
+    sqlite.exec(`
+      BEGIN;
+      CREATE TABLE entry_new (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES tab_account(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES user(id),
+        actor_id TEXT NOT NULL REFERENCES user(id),
+        kind TEXT NOT NULL CHECK (kind IN ('consume','undo','payment','charge')),
+        option_id TEXT REFERENCES option(id),
+        amount_cents INTEGER,
+        note TEXT,
+        reverses_entry_id TEXT,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO entry_new SELECT * FROM entry;
+      DROP TABLE entry;
+      ALTER TABLE entry_new RENAME TO entry;
+      CREATE INDEX entry_account_idx ON entry(account_id);
+      CREATE INDEX entry_account_user_idx ON entry(account_id, user_id);
+      COMMIT;
+    `);
+    sqlite.pragma("foreign_keys = ON");
+  }
+}
+
+sqlite.pragma(`user_version = ${SCHEMA_VERSION}`);
 
 export const db = drizzle(sqlite, { schema });
 export { schema, sqlite };
