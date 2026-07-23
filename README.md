@@ -1,5 +1,9 @@
 # 🍺 Tab Tracker
 
+[![release](https://img.shields.io/github/v/release/zachyale/tab-tracker?sort=semver)](https://github.com/zachyale/tab-tracker/releases)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzachyale%2Ftab-tracker%2Fbadges%2Fcoverage.json)](https://github.com/zachyale/tab-tracker/actions/workflows/ci.yml)
+
 > **Note:** This is a personal project, open source for posterity. It comes with
 > no guarantee of support or stability.
 
@@ -69,8 +73,9 @@ Tailwind on the client.
 - All commits follow [Conventional Commits](https://www.conventionalcommits.org/)
   — subject line only, no body. `fix:` → patch, `feat:` → minor, `feat!:`/`fix!:`
   → major.
-- [release-please](https://github.com/googleapis/release-please) maintains a
-  release PR from those commits; merging it tags `vX.Y.Z`, updates
+- Releases are cut manually: a repository **admin** runs the `release-please`
+  workflow (Actions → release-please → Run workflow). It opens/updates a
+  release PR from the commit history; merging that PR tags `vX.Y.Z`, updates
   `CHANGELOG.md`, and creates the GitHub Release.
 - Publishing a release triggers the Docker workflow, which pushes a multi-arch
   (amd64/arm64) image to `ghcr.io/zachyale/tab-tracker` tagged `X.Y.Z`,
