@@ -5,5 +5,11 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     // Single shared SQLite database — run files sequentially.
     fileParallelism: false,
+    coverage: {
+      provider: "v8",
+      include: ["src/**"],
+      exclude: ["src/index.ts"],
+      reporter: ["text", "json-summary"],
+    },
   },
 });
