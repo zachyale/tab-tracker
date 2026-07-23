@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { genericOAuth } from "better-auth/plugins";
+import { admin, genericOAuth } from "better-auth/plugins";
 import { and, count, eq } from "drizzle-orm";
 import { db, schema } from "./db/index.js";
 import { env, googleEnabled, oidcEnabled, smtpEnabled } from "./env.js";
@@ -27,6 +27,12 @@ export const auth = betterAuth({
     additionalFields: {
       role: { type: "string", defaultValue: "user", input: false },
     },
+  },
+  // Auth endpoints are rate limited (per IP) — the public face of the app.
+  rateLimit: {
+    enabled: process.env.NODE_ENV !== "test",
+    window: 60,
+    max: 30,
   },
   databaseHooks: {
     user: {
@@ -90,21 +96,26 @@ export const auth = betterAuth({
         },
       }
     : {},
-  plugins: oidcEnabled
-    ? [
-        genericOAuth({
-          config: [
-            {
-              providerId: "oidc",
-              discoveryUrl: env.oidc.discoveryUrl,
-              clientId: env.oidc.clientId,
-              clientSecret: env.oidc.clientSecret,
-              scopes: ["openid", "profile", "email"],
-            },
-          ],
-        }),
-      ]
-    : [],
+  plugins: [
+    // Instance administration: list users, ban/unban (deactivate), and set a
+    // user's password manually when SMTP isn't configured.
+    admin({ defaultRole: "user" }),
+    ...(oidcEnabled
+      ? [
+          genericOAuth({
+            config: [
+              {
+                providerId: "oidc",
+                discoveryUrl: env.oidc.discoveryUrl,
+                clientId: env.oidc.clientId,
+                clientSecret: env.oidc.clientSecret,
+                scopes: ["openid", "profile", "email"],
+              },
+            ],
+          }),
+        ]
+      : []),
+  ],
 });
 
 export type SessionUser = {

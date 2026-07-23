@@ -17,6 +17,10 @@ export const user = sqliteTable("user", {
   isGhost: integer("is_ghost", { mode: "boolean" }).notNull().default(false),
   claimEmail: text("claim_email"),
   ghostAccountId: text("ghost_account_id"),
+  // better-auth admin plugin: banned users can't sign in ("deactivated")
+  banned: integer("banned", { mode: "boolean" }).default(false),
+  banReason: text("ban_reason"),
+  banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
@@ -30,6 +34,7 @@ export const session = sqliteTable("session", {
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
+  impersonatedBy: text("impersonated_by"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
@@ -71,7 +76,7 @@ export const tabAccounts = sqliteTable("tab_account", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   slug: text("slug").notNull().unique(),
-  currency: text("currency").notNull().default("USD"),
+  currency: text("currency").notNull().default("CAD"),
   ownerId: text("owner_id")
     .notNull()
     .references(() => user.id),
@@ -141,3 +146,20 @@ export const entries = sqliteTable(
     index("entry_account_user_idx").on(t.accountId, t.userId),
   ]
 );
+
+// Instance-wide settings (admin-editable), stored as JSON strings.
+export const instanceSettings = sqliteTable("instance_setting", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
+// Per-user notification preferences. A missing row (or null triggers) means
+// "use the instance defaults".
+export const notificationPrefs = sqliteTable("notification_pref", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  // JSON array of cent amounts, e.g. "[2000]"; null = instance default
+  triggersCents: text("triggers_cents"),
+});

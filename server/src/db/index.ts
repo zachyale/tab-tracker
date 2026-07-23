@@ -10,7 +10,7 @@ sqlite.pragma("foreign_keys = ON");
 // Idempotent bootstrap creates the LATEST schema; the numbered migrations
 // below (keyed off the user_version pragma) upgrade databases created by
 // older versions. Bump SCHEMA_VERSION whenever either changes.
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 sqlite.exec(`
 CREATE TABLE IF NOT EXISTS user (
@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS user (
   is_ghost INTEGER NOT NULL DEFAULT 0,
   claim_email TEXT,
   ghost_account_id TEXT,
+  banned INTEGER DEFAULT 0,
+  ban_reason TEXT,
+  ban_expires INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -34,6 +37,7 @@ CREATE TABLE IF NOT EXISTS session (
   ip_address TEXT,
   user_agent TEXT,
   user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  impersonated_by TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -68,7 +72,7 @@ CREATE TABLE IF NOT EXISTS tab_account (
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   slug TEXT NOT NULL UNIQUE,
-  currency TEXT NOT NULL DEFAULT 'USD',
+  currency TEXT NOT NULL DEFAULT 'CAD',
   owner_id TEXT NOT NULL REFERENCES user(id),
   created_at INTEGER NOT NULL
 );
@@ -105,6 +109,17 @@ CREATE TABLE IF NOT EXISTS entry (
 );
 CREATE INDEX IF NOT EXISTS entry_account_idx ON entry(account_id);
 CREATE INDEX IF NOT EXISTS entry_account_user_idx ON entry(account_id, user_id);
+
+CREATE TABLE IF NOT EXISTS instance_setting (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notification_pref (
+  user_id TEXT PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  triggers_cents TEXT
+);
 `);
 
 // ---------------------------------------------------------------------------
@@ -158,6 +173,26 @@ if (version < 1) {
     `);
     sqlite.pragma("foreign_keys = ON");
   }
+}
+
+if (version < 2) {
+  const userCols = (
+    sqlite.prepare("SELECT name FROM pragma_table_info('user')").all() as { name: string }[]
+  ).map((r) => r.name);
+  if (!userCols.includes("banned")) {
+    sqlite.exec(`
+      ALTER TABLE user ADD COLUMN banned INTEGER DEFAULT 0;
+      ALTER TABLE user ADD COLUMN ban_reason TEXT;
+      ALTER TABLE user ADD COLUMN ban_expires INTEGER;
+    `);
+  }
+  const sessionCols = (
+    sqlite.prepare("SELECT name FROM pragma_table_info('session')").all() as { name: string }[]
+  ).map((r) => r.name);
+  if (!sessionCols.includes("impersonated_by")) {
+    sqlite.exec("ALTER TABLE session ADD COLUMN impersonated_by TEXT;");
+  }
+  // instance_setting / notification_pref are created by the bootstrap above.
 }
 
 sqlite.pragma(`user_version = ${SCHEMA_VERSION}`);
