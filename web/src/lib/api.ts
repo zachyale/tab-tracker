@@ -30,6 +30,8 @@ export const api = {
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
@@ -39,6 +41,14 @@ export type InstanceConfig = {
   oidc: { name: string } | null;
   smtp: boolean;
   defaultAuthMethod: "oauth" | "password";
+  currencies: string[];
+  defaultCurrency: string;
+};
+
+export type NotificationSettings = {
+  smtpEnabled: boolean;
+  instance: { enabled: boolean; triggersCents: number[] };
+  mine: { enabled: boolean; triggersCents: number[] | null };
 };
 
 export type AccountSummary = {

@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
+import { useConfig } from "../App";
 import { api, ApiError } from "../lib/api";
-import { Button, Card, ErrorNote, Input } from "../components/ui";
+import { Button, Card, ErrorNote, Input, Select } from "../components/ui";
 
 export function slugify(name: string): string {
   return name
@@ -15,11 +16,12 @@ export function slugify(name: string): string {
 
 export default function NewAccount() {
   const navigate = useNavigate();
+  const config = useConfig();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
   const [description, setDescription] = useState("");
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(config.defaultCurrency);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -81,12 +83,11 @@ export default function NewAccount() {
               className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-300/50"
             />
           </label>
-          <Input
-            label="Currency (3-letter code)"
-            required
+          <Select
+            label="Currency"
+            options={config.currencies}
             value={currency}
-            maxLength={3}
-            onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+            onChange={(e) => setCurrency(e.target.value)}
           />
           <ErrorNote>{error}</ErrorNote>
           <Button type="submit" disabled={busy} className="w-full">
