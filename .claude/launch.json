@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tab-tracker",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start", "-w", "server"],
+      "port": 3000
+    }
+  ]
+}
