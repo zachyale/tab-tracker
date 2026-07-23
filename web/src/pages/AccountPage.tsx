@@ -188,7 +188,9 @@ export default function AccountPage() {
                   <span>
                     {h.kind === "payment"
                       ? `Paid ${money(h.amountCents ?? 0, account.currency)}`
-                      : `${h.kind === "undo" ? "Removed" : ""} ${h.optionName ?? ""}`.trim()}
+                      : h.kind === "charge"
+                        ? `Charged ${money(h.amountCents ?? 0, account.currency)}`
+                        : `${h.kind === "undo" ? "Removed" : ""} ${h.optionName ?? ""}`.trim()}
                     {h.byManager && (
                       <span className="ml-1 text-xs text-stone-400">by {h.actorName}</span>
                     )}

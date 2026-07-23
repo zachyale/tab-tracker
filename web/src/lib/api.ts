@@ -90,7 +90,9 @@ export type AccountPageData = {
 export type Member = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
+  isGhost: boolean;
+  claimEmail: string | null;
   lastActivity: number;
   quantities: Record<string, number>;
   balanceCents: number;
@@ -99,7 +101,7 @@ export type Member = {
 
 export type ActivityItem = {
   id: string;
-  kind: "consume" | "undo" | "payment";
+  kind: "consume" | "undo" | "payment" | "charge";
   amountCents: number | null;
   note: string | null;
   createdAt: number;

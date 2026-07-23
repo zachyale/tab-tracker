@@ -102,6 +102,71 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
     }
   }
 
+  async function addGhost(name: string, email: string) {
+    setError("");
+    try {
+      await api.post(`/api/accounts/${slug}/ghosts`, { name, email: email || null });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function editGhost(m: Member) {
+    const name = window.prompt("Ghost member name", m.name);
+    if (name === null) return;
+    const email = window.prompt(
+      "Email they'll sign up with (blank for none). Their tab transfers automatically when that email registers.",
+      m.claimEmail ?? ""
+    );
+    if (email === null) return;
+    setError("");
+    try {
+      await api.patch(`/api/accounts/${slug}/ghosts/${m.id}`, {
+        name,
+        email: email.trim() || null,
+      });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function linkGhost(m: Member) {
+    const email = window.prompt(
+      `Link "${m.name}" to an existing user. Their tab (balance and history) will transfer to that user's account.\n\nRegistered user's email:`
+    );
+    if (!email) return;
+    setError("");
+    try {
+      await api.post(`/api/accounts/${slug}/ghosts/${m.id}/link`, { email: email.trim() });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function removeGhost(m: Member) {
+    if (!window.confirm(`Remove ghost member "${m.name}" and their entire tab history?`)) return;
+    setError("");
+    try {
+      await api.del(`/api/accounts/${slug}/ghosts/${m.id}`);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function recordCharge(userId: string, amountCents: number, note: string) {
+    setError("");
+    try {
+      await api.post(`/api/accounts/${slug}/charges`, { userId, amountCents, note });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
   async function recordPayment(userId: string, amountCents: number, note: string) {
     setError("");
     try {
@@ -147,9 +212,21 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
             onClick={() => setExpanded(expanded === m.id ? null : m.id)}
           >
             <div>
-              <div className="font-semibold">{m.name}</div>
+              <div className="font-semibold">
+                {m.name}
+                {m.isGhost && (
+                  <span className="ml-2 rounded-full bg-stone-200 px-2 py-0.5 text-xs font-medium text-stone-600">
+                    👻 ghost
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-stone-500">
-                {m.email} · active {timeAgo(m.lastActivity)}
+                {m.isGhost
+                  ? m.claimEmail
+                    ? `claimable by ${m.claimEmail}`
+                    : "no claim email set"
+                  : m.email}{" "}
+                · active {timeAgo(m.lastActivity)}
               </div>
             </div>
             <span
@@ -189,42 +266,124 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
               <PaymentForm
                 currency={currency}
                 balanceCents={m.balanceCents}
-                onSubmit={(cents, note) => void recordPayment(m.id, cents, note)}
+                onPayment={(cents, note) => void recordPayment(m.id, cents, note)}
+                onCharge={(cents, note) => void recordCharge(m.id, cents, note)}
               />
+              {m.isGhost && (
+                <div className="flex gap-3 text-xs">
+                  <button className="text-stone-500 underline" onClick={() => void editGhost(m)}>
+                    Edit ghost
+                  </button>
+                  <button className="text-stone-500 underline" onClick={() => void linkGhost(m)}>
+                    Link to user
+                  </button>
+                  <button className="text-red-700 underline" onClick={() => void removeGhost(m)}>
+                    Remove ghost
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </Card>
       ))}
+      <AddGhostForm onAdd={(name, email) => void addGhost(name, email)} />
     </div>
+  );
+}
+
+function AddGhostForm({ onAdd }: { onAdd: (name: string, email: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="text-sm text-stone-500 underline">
+        + Add a ghost member (someone who hasn't signed up yet)
+      </button>
+    );
+  }
+
+  return (
+    <Card>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onAdd(name.trim(), email.trim());
+          setName("");
+          setEmail("");
+          setOpen(false);
+        }}
+        className="space-y-2"
+      >
+        <p className="text-sm text-stone-600">
+          Ghost members let you backfill a tab for someone before they register. If you set
+          their email, the tab transfers to them automatically when they sign up with it.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <div className="min-w-40 flex-1">
+            <Input
+              label="Name"
+              required
+              placeholder="Dave"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="min-w-40 flex-1">
+            <Input
+              label="Email (optional)"
+              type="email"
+              placeholder="dave@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button type="submit">Add ghost</Button>
+          <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
 function PaymentForm({
   currency,
   balanceCents,
-  onSubmit,
+  onPayment,
+  onCharge,
 }: {
   currency: string;
   balanceCents: number;
-  onSubmit: (cents: number, note: string) => void;
+  onPayment: (cents: number, note: string) => void;
+  onCharge: (cents: number, note: string) => void;
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
 
-  function submit(e: FormEvent) {
-    e.preventDefault();
+  function submit(handler: (cents: number, note: string) => void) {
     const cents = Math.round(parseFloat(amount) * 100);
     if (!Number.isFinite(cents) || cents <= 0) return;
-    onSubmit(cents, note);
+    handler(cents, note);
     setAmount("");
     setNote("");
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-wrap items-end gap-2 rounded-xl bg-stone-50 p-3">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit(onPayment);
+      }}
+      className="flex flex-wrap items-end gap-2 rounded-xl bg-stone-50 p-3"
+    >
       <div className="w-28">
         <Input
-          label="Payment"
+          label="Amount"
           type="number"
           step="0.01"
           min="0.01"
@@ -236,13 +395,16 @@ function PaymentForm({
       <div className="min-w-32 flex-1">
         <Input
           label="Note"
-          placeholder="Venmo, cash…"
+          placeholder="Venmo, cash, backfill…"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
       </div>
       <Button type="submit" variant="secondary">
-        Record
+        Record payment
+      </Button>
+      <Button type="button" variant="secondary" onClick={() => submit(onCharge)}>
+        Add charge
       </Button>
       {balanceCents > 0 && (
         <button
@@ -280,11 +442,13 @@ function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
             <strong>{h.userName}</strong>{" "}
             {h.kind === "payment"
               ? `paid ${money(h.amountCents ?? 0, currency)}`
-              : h.kind === "undo"
-                ? `removed ${h.optionName ?? "an item"}`
-                : `had ${h.optionName ?? "an item"}${
-                    h.amountCents != null ? ` (${money(h.amountCents, currency)})` : ""
-                  }`}
+              : h.kind === "charge"
+                ? `was charged ${money(h.amountCents ?? 0, currency)}`
+                : h.kind === "undo"
+                  ? `removed ${h.optionName ?? "an item"}`
+                  : `had ${h.optionName ?? "an item"}${
+                      h.amountCents != null ? ` (${money(h.amountCents, currency)})` : ""
+                    }`}
             {h.byManager && <span className="ml-1 text-xs text-stone-400">by {h.actorName}</span>}
             {h.note && <span className="ml-1 text-xs text-stone-400">({h.note})</span>}
           </span>
