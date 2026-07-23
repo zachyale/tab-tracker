@@ -1,0 +1,17 @@
+{
+  "name": "Tab Tracker",
+  "short_name": "Tab Tracker",
+  "description": "Track tabs among friends — who drank what, and who owes what.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0a09",
+  "theme_color": "#0c0a09",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
