@@ -1,0 +1,610 @@
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams } from "react-router";
+import QRCode from "qrcode";
+import {
+  api,
+  ApiError,
+  type AccountPageData,
+  type ActivityItem,
+  type Member,
+  type Option,
+} from "../lib/api";
+import { balanceLabel, money, timeAgo } from "../lib/format";
+import { Button, Card, ErrorNote, Input, Spinner } from "../components/ui";
+
+type Tab = "members" | "activity" | "options" | "settings";
+
+export default function ManagePage() {
+  const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+  const [data, setData] = useState<AccountPageData | null>(null);
+  const [tab, setTab] = useState<Tab>("members");
+  const [error, setError] = useState("");
+
+  const load = useCallback(() => {
+    api
+      .get<AccountPageData>(`/api/accounts/${slug}`)
+      .then((d) => {
+        if (!d.isManager) navigate(`/accounts/${slug}`);
+        else setData(d);
+      })
+      .catch((e) => setError(e instanceof ApiError ? e.message : "Failed to load"));
+  }, [slug, navigate]);
+
+  useEffect(load, [load]);
+
+  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (!data) return <Spinner />;
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "members", label: "Members" },
+    { id: "activity", label: "Activity" },
+    { id: "options", label: "Options" },
+    { id: "settings", label: "Settings" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">{data.account.name}</h1>
+          <Link to={`/accounts/${slug}`} className="text-sm text-stone-500 underline">
+            View public page
+          </Link>
+        </div>
+      </div>
+
+      <div className="flex gap-1 overflow-x-auto rounded-xl bg-stone-200/70 p-1">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-semibold ${
+              tab === t.id ? "bg-white shadow-sm" : "text-stone-500 hover:text-stone-800"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "members" && <MembersTab slug={slug!} data={data} />}
+      {tab === "activity" && <ActivityTab slug={slug!} currency={data.account.currency} />}
+      {tab === "options" && <OptionsTab slug={slug!} currency={data.account.currency} />}
+      {tab === "settings" && <SettingsTab slug={slug!} data={data} onSaved={load} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const currency = data.account.currency;
+
+  const load = useCallback(() => {
+    api
+      .get<{ members: Member[] }>(`/api/accounts/${slug}/members`)
+      .then((r) => setMembers(r.members))
+      .catch((e) => setError(e.message));
+  }, [slug]);
+  useEffect(load, [load]);
+
+  async function adjust(userId: string, optionId: string, action: "increment" | "decrement") {
+    setError("");
+    try {
+      await api.post(`/api/accounts/${slug}/entries`, { optionId, action, userId });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function recordPayment(userId: string, amountCents: number, note: string) {
+    setError("");
+    try {
+      await api.post(`/api/accounts/${slug}/payments`, { userId, amountCents, note });
+      load();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.data.requiresConfirmation) {
+        const balance = money((e.data.balanceCents as number) ?? 0, currency);
+        if (
+          window.confirm(
+            `That's more than their current balance (${balance}). Record it anyway and leave them in credit?`
+          )
+        ) {
+          await api.post(`/api/accounts/${slug}/payments`, {
+            userId,
+            amountCents,
+            note,
+            allowNegative: true,
+          });
+          load();
+          return;
+        }
+      } else {
+        setError(e instanceof ApiError ? e.message : "Failed");
+      }
+    }
+  }
+
+  if (!members) return <Spinner />;
+
+  return (
+    <div className="space-y-2">
+      <ErrorNote>{error}</ErrorNote>
+      {members.length === 0 && (
+        <Card className="text-sm text-stone-500">
+          No tabs yet. Share the public link to get started.
+        </Card>
+      )}
+      {members.map((m) => (
+        <Card key={m.id} className="space-y-3">
+          <button
+            className="flex w-full items-center justify-between text-left"
+            onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+          >
+            <div>
+              <div className="font-semibold">{m.name}</div>
+              <div className="text-xs text-stone-500">
+                {m.email} · active {timeAgo(m.lastActivity)}
+              </div>
+            </div>
+            <span
+              className={`font-bold ${
+                m.balanceCents > 0 || m.unpricedCount > 0 ? "text-red-700" : "text-emerald-700"
+              }`}
+            >
+              {balanceLabel(m.balanceCents, m.unpricedCount, currency)}
+            </span>
+          </button>
+
+          {expanded === m.id && (
+            <div className="space-y-3 border-t border-stone-100 pt-3">
+              {data.options.map((o) => (
+                <div key={o.id} className="flex items-center justify-between text-sm">
+                  <span>{o.name}</span>
+                  <span className="flex items-center gap-2">
+                    <button
+                      onClick={() => void adjust(m.id, o.id, "decrement")}
+                      disabled={(m.quantities[o.id] ?? 0) === 0}
+                      className="grid size-8 place-items-center rounded-full border border-stone-300 font-bold disabled:opacity-30"
+                    >
+                      −
+                    </button>
+                    <span className="w-6 text-center font-bold tabular-nums">
+                      {m.quantities[o.id] ?? 0}
+                    </span>
+                    <button
+                      onClick={() => void adjust(m.id, o.id, "increment")}
+                      className="grid size-8 place-items-center rounded-full bg-stone-900 font-bold text-amber-50"
+                    >
+                      +
+                    </button>
+                  </span>
+                </div>
+              ))}
+              <PaymentForm
+                currency={currency}
+                balanceCents={m.balanceCents}
+                onSubmit={(cents, note) => void recordPayment(m.id, cents, note)}
+              />
+            </div>
+          )}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function PaymentForm({
+  currency,
+  balanceCents,
+  onSubmit,
+}: {
+  currency: string;
+  balanceCents: number;
+  onSubmit: (cents: number, note: string) => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const cents = Math.round(parseFloat(amount) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) return;
+    onSubmit(cents, note);
+    setAmount("");
+    setNote("");
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-end gap-2 rounded-xl bg-stone-50 p-3">
+      <div className="w-28">
+        <Input
+          label="Payment"
+          type="number"
+          step="0.01"
+          min="0.01"
+          placeholder="0.00"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </div>
+      <div className="min-w-32 flex-1">
+        <Input
+          label="Note"
+          placeholder="Venmo, cash…"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </div>
+      <Button type="submit" variant="secondary">
+        Record
+      </Button>
+      {balanceCents > 0 && (
+        <button
+          type="button"
+          className="text-xs text-stone-500 underline"
+          onClick={() => setAmount((balanceCents / 100).toFixed(2))}
+        >
+          settle {money(balanceCents, currency)}
+        </button>
+      )}
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
+  const [items, setItems] = useState<ActivityItem[] | null>(null);
+
+  useEffect(() => {
+    api
+      .get<{ activity: ActivityItem[] }>(`/api/accounts/${slug}/activity`)
+      .then((r) => setItems(r.activity))
+      .catch(console.error);
+  }, [slug]);
+
+  if (!items) return <Spinner />;
+
+  return (
+    <Card className="divide-y divide-stone-100 p-0">
+      {items.length === 0 && <p className="p-3 text-sm text-stone-500">No activity yet.</p>}
+      {items.map((h) => (
+        <div key={h.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+          <span className="min-w-0">
+            <strong>{h.userName}</strong>{" "}
+            {h.kind === "payment"
+              ? `paid ${money(h.amountCents ?? 0, currency)}`
+              : h.kind === "undo"
+                ? `removed ${h.optionName ?? "an item"}`
+                : `had ${h.optionName ?? "an item"}${
+                    h.amountCents != null ? ` (${money(h.amountCents, currency)})` : ""
+                  }`}
+            {h.byManager && <span className="ml-1 text-xs text-stone-400">by {h.actorName}</span>}
+            {h.note && <span className="ml-1 text-xs text-stone-400">({h.note})</span>}
+          </span>
+          <span className="shrink-0 text-xs text-stone-400">{timeAgo(h.createdAt)}</span>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
+  const [options, setOptions] = useState<(Option & { archived: boolean })[] | null>(null);
+  const [error, setError] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+
+  const load = useCallback(() => {
+    api
+      .get<{ options: (Option & { archived: boolean })[] }>(`/api/accounts/${slug}/options`)
+      .then((r) => setOptions(r.options))
+      .catch((e) => setError(e.message));
+  }, [slug]);
+  useEffect(load, [load]);
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    const priceCents = price.trim() === "" ? null : Math.round(parseFloat(price) * 100);
+    try {
+      await api.post(`/api/accounts/${slug}/options`, { name, description, priceCents });
+      setName("");
+      setDescription("");
+      setPrice("");
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed");
+    }
+  }
+
+  async function update(id: string, patch: Record<string, unknown>) {
+    setError("");
+    try {
+      await api.patch(`/api/accounts/${slug}/options/${id}`, patch);
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed");
+    }
+  }
+
+  if (!options) return <Spinner />;
+
+  return (
+    <div className="space-y-3">
+      <ErrorNote>{error}</ErrorNote>
+      <Card>
+        <form onSubmit={add} className="space-y-2">
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <Input
+                label="New option"
+                required
+                placeholder="Cold brew"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="w-28">
+              <Input
+                label={`Price (${currency})`}
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="none"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+              />
+            </div>
+          </div>
+          <Input
+            placeholder="Description (optional)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          <Button type="submit">Add option</Button>
+        </form>
+      </Card>
+
+      {options.map((o) => (
+        <Card key={o.id} className={`flex items-center justify-between ${o.archived ? "opacity-50" : ""}`}>
+          <div className="min-w-0">
+            <div className="font-semibold">
+              {o.name}
+              {o.archived && <span className="ml-2 text-xs text-stone-500">archived</span>}
+            </div>
+            {o.description && <div className="truncate text-xs text-stone-500">{o.description}</div>}
+            <div className="text-sm text-stone-600">
+              {o.priceCents != null ? money(o.priceCents, currency) : "no price"}
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const raw = window.prompt(
+                  `New price for "${o.name}" in ${currency} (blank for no price). Existing tabs keep their recorded prices.`,
+                  o.priceCents != null ? (o.priceCents / 100).toFixed(2) : ""
+                );
+                if (raw === null) return;
+                const priceCents = raw.trim() === "" ? null : Math.round(parseFloat(raw) * 100);
+                if (priceCents !== null && !Number.isFinite(priceCents)) return;
+                void update(o.id, { priceCents });
+              }}
+            >
+              Price
+            </Button>
+            <Button variant="secondary" onClick={() => void update(o.id, { archived: !o.archived })}>
+              {o.archived ? "Restore" : "Archive"}
+            </Button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function SettingsTab({
+  slug,
+  data,
+  onSaved,
+}: {
+  slug: string;
+  data: AccountPageData;
+  onSaved: () => void;
+}) {
+  const navigate = useNavigate();
+  const [name, setName] = useState(data.account.name);
+  const [description, setDescription] = useState(data.account.description);
+  const [newSlug, setNewSlug] = useState(data.account.slug);
+  const [currency, setCurrency] = useState(data.account.currency);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+  const [managers, setManagers] = useState<{
+    owner: { id: string; name: string; email: string } | null;
+    managers: { id: string; name: string; email: string }[];
+  } | null>(null);
+  const [managerEmail, setManagerEmail] = useState("");
+
+  const publicUrl = `${window.location.origin}/accounts/${data.account.slug}`;
+
+  const loadManagers = useCallback(() => {
+    api
+      .get<NonNullable<typeof managers>>(`/api/accounts/${slug}/managers`)
+      .then(setManagers)
+      .catch(console.error);
+  }, [slug]);
+  useEffect(loadManagers, [loadManagers]);
+
+  useEffect(() => {
+    QRCode.toDataURL(publicUrl, { width: 512, margin: 2 }).then(setQr).catch(console.error);
+  }, [publicUrl]);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSaved(false);
+    try {
+      const res = await api.patch<{ slug: string }>(`/api/accounts/${slug}`, {
+        name,
+        description,
+        slug: newSlug,
+        currency,
+      });
+      setSaved(true);
+      if (res.slug !== slug) navigate(`/accounts/${res.slug}/manage`);
+      else onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save");
+    }
+  }
+
+  async function addManager(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await api.post(`/api/accounts/${slug}/managers`, { email: managerEmail });
+      setManagerEmail("");
+      loadManagers();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add manager");
+    }
+  }
+
+  async function removeAccount() {
+    if (
+      !window.confirm(
+        `Delete "${data.account.name}" and its entire ledger? This cannot be undone.`
+      )
+    )
+      return;
+    await api.del(`/api/accounts/${slug}`);
+    navigate("/");
+  }
+
+  return (
+    <div className="space-y-3">
+      <ErrorNote>{error}</ErrorNote>
+
+      <Card>
+        <h3 className="mb-3 font-bold">Details</h3>
+        <form onSubmit={save} className="space-y-3">
+          <Input label="Name" required value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-stone-700">Description</span>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-300/50"
+            />
+          </label>
+          <Input
+            label="URL slug"
+            required
+            value={newSlug}
+            onChange={(e) => setNewSlug(e.target.value.toLowerCase())}
+          />
+          <Input
+            label="Currency"
+            required
+            maxLength={3}
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+          />
+          <div className="flex items-center gap-3">
+            <Button type="submit">Save</Button>
+            {saved && <span className="text-sm text-emerald-700">Saved ✓</span>}
+          </div>
+        </form>
+      </Card>
+
+      <Card>
+        <h3 className="mb-2 font-bold">Share</h3>
+        <p className="mb-3 break-all text-sm text-stone-600">{publicUrl}</p>
+        {qr && (
+          <div className="flex flex-col items-start gap-2">
+            <img src={qr} alt="QR code for account page" className="w-40 rounded-lg border" />
+            <a
+              href={qr}
+              download={`${data.account.slug}-qr.png`}
+              className="text-sm font-semibold underline"
+            >
+              Download QR code
+            </a>
+          </div>
+        )}
+        <div className="mt-3 border-t border-stone-100 pt-3">
+          <a href={`/api/accounts/${slug}/export.csv`} className="text-sm font-semibold underline">
+            Export ledger as CSV
+          </a>
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="mb-2 font-bold">Managers</h3>
+        {managers?.owner && (
+          <p className="text-sm">
+            <strong>{managers.owner.name}</strong>{" "}
+            <span className="text-xs text-stone-500">owner · {managers.owner.email}</span>
+          </p>
+        )}
+        {managers?.managers.map((m) => (
+          <p key={m.id} className="mt-1 flex items-center justify-between text-sm">
+            <span>
+              <strong>{m.name}</strong>{" "}
+              <span className="text-xs text-stone-500">{m.email}</span>
+            </span>
+            {data.isOwner && (
+              <button
+                className="text-xs text-red-700 underline"
+                onClick={() =>
+                  void api.del(`/api/accounts/${slug}/managers/${m.id}`).then(loadManagers)
+                }
+              >
+                remove
+              </button>
+            )}
+          </p>
+        ))}
+        {data.isOwner && (
+          <form onSubmit={addManager} className="mt-3 flex gap-2">
+            <div className="flex-1">
+              <Input
+                type="email"
+                required
+                placeholder="friend@example.com"
+                value={managerEmail}
+                onChange={(e) => setManagerEmail(e.target.value)}
+              />
+            </div>
+            <Button type="submit" variant="secondary">
+              Add
+            </Button>
+          </form>
+        )}
+      </Card>
+
+      {data.isOwner && (
+        <Card className="border-red-200">
+          <h3 className="mb-2 font-bold text-red-800">Danger zone</h3>
+          <Button variant="danger" onClick={() => void removeAccount()}>
+            Delete account
+          </Button>
+        </Card>
+      )}
+    </div>
+  );
+}
