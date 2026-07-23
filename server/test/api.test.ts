@@ -425,6 +425,143 @@ describe("activity, export, dashboard", () => {
   });
 });
 
+describe("currency", () => {
+  it("only accepts supported currencies", async () => {
+    const { status } = await post(
+      "/api/accounts",
+      { ...validAccount(), slug: "yen", currency: "JPY" },
+      zach
+    );
+    expect(status).toBe(400);
+  });
+
+  it("defaults to CAD when omitted", async () => {
+    const { currency, ...rest } = validAccount();
+    await post("/api/accounts", { ...rest, name: "Loonie", slug: "loonie" }, zach);
+    const { json } = await get("/api/accounts/loonie");
+    expect(json.account.currency).toBe("CAD");
+    await del("/api/accounts/loonie", zach);
+  });
+});
+
+describe("notification settings", () => {
+  it("serves instance defaults ($20 trigger, enabled)", async () => {
+    const { status, json } = await get("/api/notification-settings", alice);
+    expect(status).toBe(200);
+    expect(json.instance).toEqual({ enabled: true, triggersCents: [2000] });
+    expect(json.mine.triggersCents).toBeNull();
+  });
+
+  it("lets users customize and reset their own triggers", async () => {
+    const put = await call("PUT", "/api/notification-settings", {
+      body: { enabled: true, triggersCents: [5000, 1000, 1000] },
+      cookie: alice,
+    });
+    expect(put.status).toBe(200);
+    // deduped and sorted
+    expect(put.json.mine.triggersCents).toEqual([1000, 5000]);
+
+    const reset = await call("PUT", "/api/notification-settings", {
+      body: { enabled: false, triggersCents: null },
+      cookie: alice,
+    });
+    expect(reset.json.mine).toEqual({ enabled: false, triggersCents: null });
+  });
+
+  it("only admins change instance defaults", async () => {
+    const denied = await call("PUT", "/api/admin/notification-settings", {
+      body: { enabled: true, triggersCents: [1000] },
+      cookie: alice,
+    });
+    expect(denied.status).toBe(403);
+
+    const ok = await call("PUT", "/api/admin/notification-settings", {
+      body: { enabled: true, triggersCents: [1500, 3000] },
+      cookie: zach,
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.json.instance.triggersCents).toEqual([1500, 3000]);
+  });
+
+  it("rejects invalid trigger amounts", async () => {
+    const { status } = await call("PUT", "/api/notification-settings", {
+      body: { enabled: true, triggersCents: [-5] },
+      cookie: alice,
+    });
+    expect(status).toBe(400);
+  });
+});
+
+describe("instance administration", () => {
+  it("blocks non-admins from admin endpoints", async () => {
+    const res = await app.request("/api/auth/admin/list-users?limit=10", {
+      headers: { Cookie: alice },
+    });
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it("admins list users", async () => {
+    const res = await app.request("/api/auth/admin/list-users?limit=100", {
+      headers: { Cookie: zach },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Json;
+    expect(body.users.some((u: Json) => u.email === "alice@example.com")).toBe(true);
+  });
+
+  it("banning a user revokes their sessions and blocks sign-in", async () => {
+    const carol = await signup("Carol", "carol@example.com");
+    expect((await get("/api/me", carol)).json.user).not.toBeNull();
+
+    const carolId = (
+      await app
+        .request("/api/auth/admin/list-users?limit=100", { headers: { Cookie: zach } })
+        .then((r) => r.json() as Promise<Json>)
+    ).users.find((u: Json) => u.email === "carol@example.com").id;
+
+    const ban = await post("/api/auth/admin/ban-user", { userId: carolId }, zach);
+    expect(ban.status).toBe(200);
+
+    // existing session is dead
+    expect((await get("/api/me", carol)).json.user).toBeNull();
+
+    // sign-in refused while banned
+    const signin = await post("/api/auth/sign-in/email", {
+      email: "carol@example.com",
+      password: "test-password-123",
+    });
+    expect(signin.status).toBeGreaterThanOrEqual(400);
+
+    // unban restores access
+    await post("/api/auth/admin/unban-user", { userId: carolId }, zach);
+    const again = await post("/api/auth/sign-in/email", {
+      email: "carol@example.com",
+      password: "test-password-123",
+    });
+    expect(again.status).toBe(200);
+  });
+
+  it("admins can set a user's password directly", async () => {
+    const users = (await app
+      .request("/api/auth/admin/list-users?limit=100", { headers: { Cookie: zach } })
+      .then((r) => r.json() as Promise<Json>)) as Json;
+    const carolId = users.users.find((u: Json) => u.email === "carol@example.com").id;
+
+    const set = await post(
+      "/api/auth/admin/set-user-password",
+      { userId: carolId, newPassword: "brand-new-password-1" },
+      zach
+    );
+    expect(set.status).toBe(200);
+
+    const login = await post("/api/auth/sign-in/email", {
+      email: "carol@example.com",
+      password: "brand-new-password-1",
+    });
+    expect(login.status).toBe(200);
+  });
+});
+
 describe("account deletion", () => {
   it("only the owner can delete; deletion removes the ledger", async () => {
     await post("/api/accounts", { ...validAccount(), name: "Temp", slug: "temp" }, zach);
