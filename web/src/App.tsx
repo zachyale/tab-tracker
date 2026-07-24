@@ -22,7 +22,6 @@ import AccountPage from "./pages/AccountPage";
 import ManagePage from "./pages/ManagePage";
 import AdminPage from "./pages/AdminPage";
 import ProfilePage from "./pages/ProfilePage";
-import SettingsPage from "./pages/SettingsPage";
 import { ForgotPassword, ResetPassword } from "./pages/PasswordReset";
 
 const DEFAULT_CONFIG: InstanceConfig = {
@@ -93,7 +92,6 @@ function UserMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">
         <DropdownMenuItem onClick={() => navigate("/profile")}>Edit profile</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate("/settings")}>Settings</DropdownMenuItem>
         {isAdmin && (
           <DropdownMenuItem onClick={() => navigate("/admin")}>Admin settings</DropdownMenuItem>
         )}
@@ -164,7 +162,6 @@ export default function App() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/profile" element={<ProfilePage />} />
-              <Route path="/settings" element={<SettingsPage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/accounts/new" element={<NewAccount />} />
               <Route path="/accounts/:slug" element={<AccountPage />} />

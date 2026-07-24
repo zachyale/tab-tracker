@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { authClient, useSession } from "../lib/auth";
 import { Button, Card, ErrorNote, Input, Spinner } from "../components/fields";
+import { NotificationPrefsCard } from "../components/NotificationPrefsCard";
 
 export default function ProfilePage() {
   const { data: session, isPending } = useSession();
@@ -101,6 +102,9 @@ export default function ProfilePage() {
           </p>
         </form>
       </Card>
+
+      <h2 className="pt-2 text-lg font-bold">Preferences</h2>
+      <NotificationPrefsCard />
     </div>
   );
 }
