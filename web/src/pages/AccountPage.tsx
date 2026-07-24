@@ -75,7 +75,7 @@ export default function AccountPage() {
 
   if (notFound)
     return (
-      <Card className="text-center text-stone-600">
+      <Card className="text-center text-muted-foreground">
         No account at <code>/{slug}</code>.
       </Card>
     );
@@ -91,13 +91,13 @@ export default function AccountPage() {
           <div>
             <h1 className="text-2xl font-bold">{account.name}</h1>
             {account.description && (
-              <p className="mt-1 text-sm text-stone-600">{account.description}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{account.description}</p>
             )}
           </div>
           {data.isManager && (
             <Link
               to={`/accounts/${account.slug}/manage`}
-              className="shrink-0 rounded-xl border border-stone-300 bg-white px-3 py-1.5 text-sm font-semibold hover:bg-stone-100"
+              className="shrink-0 rounded-xl border border-input bg-card px-3 py-1.5 text-sm font-semibold hover:bg-muted"
             >
               Manage
             </Link>
@@ -106,7 +106,7 @@ export default function AccountPage() {
       </div>
 
       {loggedIn && mine && (
-        <div className="flex items-center justify-between rounded-2xl bg-stone-900 p-4 text-amber-50 shadow-sm">
+        <div className="flex items-center justify-between rounded-2xl bg-primary p-4 text-primary-foreground shadow-sm">
           <span className="text-sm">Your tab</span>
           <span className="text-xl font-bold">
             {balanceLabel(mine.balanceCents, mine.unpricedCount, account.currency)}
@@ -116,10 +116,10 @@ export default function AccountPage() {
 
       {!loggedIn && (
         <Card className="flex items-center justify-between gap-3">
-          <p className="text-sm text-stone-600">Log in to start a tab and track what you owe.</p>
+          <p className="text-sm text-muted-foreground">Log in to start a tab and track what you owe.</p>
           <Link
             to={`/login?next=${encodeURIComponent(`/accounts/${account.slug}`)}`}
-            className="shrink-0 rounded-xl bg-stone-900 px-4 py-2 text-sm font-semibold text-amber-50 hover:bg-stone-700"
+            className="shrink-0 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/80"
           >
             Log in
           </Link>
@@ -130,7 +130,7 @@ export default function AccountPage() {
 
       <div className="space-y-2">
         {options.length === 0 && (
-          <Card className="text-sm text-stone-500">No options here yet.</Card>
+          <Card className="text-sm text-muted-foreground">No options here yet.</Card>
         )}
         {options.map((o) => {
           const qty = mine?.quantities[o.id] ?? 0;
@@ -139,9 +139,9 @@ export default function AccountPage() {
               <div className="min-w-0">
                 <div className="font-semibold">{o.name}</div>
                 {o.description && (
-                  <div className="truncate text-xs text-stone-500">{o.description}</div>
+                  <div className="truncate text-xs text-muted-foreground">{o.description}</div>
                 )}
-                <div className="text-sm text-stone-600">
+                <div className="text-sm text-muted-foreground">
                   {o.priceCents != null ? money(o.priceCents, account.currency) : "no price"}
                 </div>
               </div>
@@ -151,7 +151,7 @@ export default function AccountPage() {
                     aria-label={`Remove one ${o.name}`}
                     disabled={qty === 0 || pending === o.id}
                     onClick={() => void bump(o.id, "decrement")}
-                    className="grid size-11 place-items-center rounded-full border border-stone-300 text-xl font-bold text-stone-700 active:bg-stone-200 disabled:opacity-30"
+                    className="grid size-11 place-items-center rounded-full border border-input text-xl font-bold text-foreground active:bg-muted disabled:opacity-30"
                   >
                     −
                   </button>
@@ -160,13 +160,13 @@ export default function AccountPage() {
                     aria-label={`Add one ${o.name}`}
                     disabled={pending === o.id}
                     onClick={() => void bump(o.id, "increment")}
-                    className="grid size-11 place-items-center rounded-full bg-stone-900 text-xl font-bold text-amber-50 active:bg-stone-700 disabled:opacity-50"
+                    className="grid size-11 place-items-center rounded-full bg-primary text-xl font-bold text-primary-foreground active:bg-primary/80 disabled:opacity-50"
                   >
                     +
                   </button>
                 </div>
               ) : (
-                <span className="text-xs text-stone-400">log in to track</span>
+                <span className="text-xs text-muted-foreground">log in to track</span>
               )}
             </Card>
           );
@@ -175,13 +175,13 @@ export default function AccountPage() {
 
       {loggedIn && mine && (
         <div className="pt-2">
-          <button onClick={() => void toggleHistory()} className="text-sm text-stone-500 underline">
+          <button onClick={() => void toggleHistory()} className="text-sm text-muted-foreground underline">
             {history ? "Hide my history" : "Show my history"}
           </button>
           {history && (
-            <Card className="mt-2 divide-y divide-stone-100 p-0">
+            <Card className="mt-2 divide-y divide-border p-0">
               {history.length === 0 && (
-                <p className="p-3 text-sm text-stone-500">No activity yet.</p>
+                <p className="p-3 text-sm text-muted-foreground">No activity yet.</p>
               )}
               {history.map((h) => (
                 <div key={h.id} className="flex items-center justify-between px-3 py-2 text-sm">
@@ -192,11 +192,11 @@ export default function AccountPage() {
                         ? `Charged ${money(h.amountCents ?? 0, account.currency)}`
                         : `${h.kind === "undo" ? "Removed" : ""} ${h.optionName ?? ""}`.trim()}
                     {h.byManager && (
-                      <span className="ml-1 text-xs text-stone-400">by {h.actorName}</span>
+                      <span className="ml-1 text-xs text-muted-foreground">by {h.actorName}</span>
                     )}
-                    {h.note && <span className="ml-1 text-xs text-stone-400">({h.note})</span>}
+                    {h.note && <span className="ml-1 text-xs text-muted-foreground">({h.note})</span>}
                   </span>
-                  <span className="text-xs text-stone-400">{timeAgo(h.createdAt)}</span>
+                  <span className="text-xs text-muted-foreground">{timeAgo(h.createdAt)}</span>
                 </div>
               ))}
             </Card>

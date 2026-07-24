@@ -64,7 +64,7 @@ export default function Login() {
 
         {hasProviders && !showPassword ? (
           <button
-            className="w-full text-center text-sm text-stone-500 underline"
+            className="w-full text-center text-sm text-muted-foreground underline"
             onClick={() => setShowPassword(true)}
           >
             Use email &amp; password instead
@@ -72,8 +72,8 @@ export default function Login() {
         ) : (
           <form onSubmit={submit} className="space-y-3">
             {hasProviders && (
-              <div className="flex items-center gap-3 text-xs text-stone-400">
-                <div className="h-px flex-1 bg-stone-200" /> or <div className="h-px flex-1 bg-stone-200" />
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />
               </div>
             )}
             <Input
@@ -97,7 +97,7 @@ export default function Login() {
               {busy ? "Logging in…" : "Log in"}
             </Button>
             {config.smtp && (
-              <p className="text-center text-xs text-stone-500">
+              <p className="text-center text-xs text-muted-foreground">
                 <Link to="/forgot-password" className="underline">
                   Forgot your password?
                 </Link>
@@ -106,7 +106,7 @@ export default function Login() {
           </form>
         )}
       </Card>
-      <p className="mt-4 text-center text-sm text-stone-600">
+      <p className="mt-4 text-center text-sm text-muted-foreground">
         No account yet?{" "}
         <Link to={`/signup?next=${encodeURIComponent(next)}`} className="font-semibold underline">
           Sign up

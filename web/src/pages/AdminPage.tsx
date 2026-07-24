@@ -81,12 +81,12 @@ export default function AdminPage() {
       <h1 className="text-2xl font-bold">Instance admin</h1>
       <ErrorNote>{error}</ErrorNote>
       {notice && (
-        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
           {notice}
         </p>
       )}
 
-      <Card className="divide-y divide-stone-100 p-0">
+      <Card className="divide-y divide-border p-0">
         {users.map((u) => (
           <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
             <div>
@@ -103,7 +103,7 @@ export default function AdminPage() {
                   </Badge>
                 )}
               </div>
-              <div className="text-xs text-stone-500">
+              <div className="text-xs text-muted-foreground">
                 {u.email} · joined {timeAgo(new Date(u.createdAt).getTime())}
               </div>
             </div>
@@ -139,7 +139,7 @@ export default function AdminPage() {
       {settings && (
         <Card>
           <h3 className="mb-1 font-bold">Notifications (instance defaults)</h3>
-          <p className="mb-3 text-sm text-stone-600">
+          <p className="mb-3 text-sm text-muted-foreground">
             Members get an email when their tab crosses a trigger amount. Users can override
             these defaults or opt out from their dashboard.
             {!settings.smtpEnabled && (
