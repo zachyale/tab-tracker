@@ -70,13 +70,19 @@ Tailwind on the client.
 
 ## Releases
 
+Branch model: day-to-day commits land on **`develop`**; **`main`** only ever
+receives release merges.
+
 - All commits follow [Conventional Commits](https://www.conventionalcommits.org/)
   — subject line only, no body. `fix:` → patch, `feat:` → minor, `feat!:`/`fix!:`
   → major.
-- Releases are cut manually: a repository **admin** runs the `release-please`
-  workflow (Actions → release-please → Run workflow). It opens/updates a
-  release PR from the commit history; merging that PR tags `vX.Y.Z`, updates
-  `CHANGELOG.md`, and creates the GitHub Release.
-- Publishing a release triggers the Docker workflow, which pushes a multi-arch
-  (amd64/arm64) image to `ghcr.io/zachyale/tab-tracker` tagged `X.Y.Z`,
-  `X.Y`, and `latest`.
+- To cut a release, a repository **admin** runs the `release` workflow
+  (Actions → release → Run workflow). It computes the next version from the
+  conventional commits, commits the version bump + `CHANGELOG.md` to
+  `develop`, and opens a PR from `develop` to `main`.
+- **Merging that PR publishes the release**: the `tag-release` workflow tags
+  `vX.Y.Z`, creates the GitHub Release with the changelog, and pushes a
+  multi-arch (amd64/arm64) Docker image to `ghcr.io/zachyale/tab-tracker`
+  tagged `X.Y.Z`, `X.Y`, and `latest`.
+- The `docker` workflow can also be dispatched manually to (re)publish any
+  existing tag.

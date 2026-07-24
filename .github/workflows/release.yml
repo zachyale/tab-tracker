@@ -1,0 +1,60 @@
+name: release
+# A repository admin triggers this (Actions → release → Run workflow).
+# It computes the next semver from conventional commits, commits the version
+# bump + CHANGELOG to develop, and opens (or refreshes) a PR from develop to
+# main. Merging that PR is the publish decision — tag-release.yml then tags,
+# creates the GitHub Release, and publishes the Docker image.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  open-release-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require repository admin
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.actor,
+            });
+            if (data.permission !== 'admin') {
+              core.setFailed(`@${context.actor} has '${data.permission}' access; releases require admin.`);
+            }
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Bump version and changelog from conventional commits
+        id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          BUMP=$(npx -y conventional-recommended-bump -p conventionalcommits)
+          echo "Recommended bump: $BUMP"
+          VERSION=$(npm version "$BUMP" --no-git-tag-version)
+          touch CHANGELOG.md
+          npx -y conventional-changelog-cli -p conventionalcommits -i CHANGELOG.md -s
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "chore: release ${VERSION}"
+          git push origin develop
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Open or refresh the release PR (develop → main)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          BODY="Release **${VERSION}**. Merging this PR publishes the release: it tags \`${VERSION}\`, creates the GitHub Release, and pushes the Docker image to GHCR. See CHANGELOG.md in the diff for what's included."
+          EXISTING=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --title "release: ${VERSION}" --body "$BODY"
+          else
+            gh pr create --base main --head develop --title "release: ${VERSION}" --body "$BODY"
+          fi
