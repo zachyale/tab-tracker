@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import QRCode from "qrcode";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import {
   api,
   ApiError,
@@ -10,7 +11,7 @@ import {
   type Option,
 } from "../lib/api";
 import { useConfig } from "../App";
-import { balanceLabel, money, timeAgo } from "../lib/format";
+import { balanceLabel, currencyOption, money, timeAgo } from "../lib/format";
 import { Button, Card, ErrorNote, Input, Select, Spinner } from "../components/fields";
 import { ConfirmDialog, PromptDialog } from "../components/dialogs";
 import { Badge } from "@/components/ui/badge";
@@ -51,19 +52,19 @@ export default function ManagePage() {
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{data.account.name}</h1>
-          <Link to={`/accounts/${slug}`} className="text-sm text-stone-500 underline">
+          <Link to={`/accounts/${slug}`} className="text-sm text-muted-foreground underline">
             View public page
           </Link>
         </div>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto rounded-xl bg-stone-200/70 p-1">
+      <div className="flex gap-1 overflow-x-auto rounded-xl bg-muted p-1">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             className={`flex-1 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-semibold ${
-              tab === t.id ? "bg-white shadow-sm" : "text-stone-500 hover:text-stone-800"
+              tab === t.id ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {t.label}
@@ -204,7 +205,7 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
     <div className="space-y-2">
       <ErrorNote>{error}</ErrorNote>
       {members.length === 0 && (
-        <Card className="text-sm text-stone-500">
+        <Card className="text-sm text-muted-foreground">
           No tabs yet. Share the public link to get started.
         </Card>
       )}
@@ -223,7 +224,7 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
                   </Badge>
                 )}
               </div>
-              <div className="text-xs text-stone-500">
+              <div className="text-xs text-muted-foreground">
                 {m.isGhost
                   ? m.claimEmail
                     ? `claimable by ${m.claimEmail}`
@@ -234,7 +235,7 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
             </div>
             <span
               className={`font-bold ${
-                m.balanceCents > 0 || m.unpricedCount > 0 ? "text-red-700" : "text-emerald-700"
+                m.balanceCents > 0 || m.unpricedCount > 0 ? "text-red-700" : "text-emerald-600 dark:text-emerald-400"
               }`}
             >
               {balanceLabel(m.balanceCents, m.unpricedCount, currency)}
@@ -242,7 +243,7 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
           </button>
 
           {expanded === m.id && (
-            <div className="space-y-3 border-t border-stone-100 pt-3">
+            <div className="space-y-3 border-t border-border pt-3">
               {data.options.map((o) => (
                 <div key={o.id} className="flex items-center justify-between text-sm">
                   <span>{o.name}</span>
@@ -250,7 +251,7 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
                     <button
                       onClick={() => void adjust(m.id, o.id, "decrement")}
                       disabled={(m.quantities[o.id] ?? 0) === 0}
-                      className="grid size-8 place-items-center rounded-full border border-stone-300 font-bold disabled:opacity-30"
+                      className="grid size-8 place-items-center rounded-full border border-input font-bold disabled:opacity-30"
                     >
                       −
                     </button>
@@ -259,7 +260,7 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
                     </span>
                     <button
                       onClick={() => void adjust(m.id, o.id, "increment")}
-                      className="grid size-8 place-items-center rounded-full bg-stone-900 font-bold text-amber-50"
+                      className="grid size-8 place-items-center rounded-full bg-primary font-bold text-primary-foreground"
                     >
                       +
                     </button>
@@ -376,7 +377,7 @@ function AddGhostForm({ onAdd }: { onAdd: (name: string, email: string) => void 
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="text-sm text-stone-500 underline">
+      <button onClick={() => setOpen(true)} className="text-sm text-muted-foreground underline">
         + Add a ghost member (someone who hasn't signed up yet)
       </button>
     );
@@ -394,7 +395,7 @@ function AddGhostForm({ onAdd }: { onAdd: (name: string, email: string) => void 
         }}
         className="space-y-2"
       >
-        <p className="text-sm text-stone-600">
+        <p className="text-sm text-muted-foreground">
           Ghost members let you backfill a tab for someone before they register. If you set
           their email, the tab transfers to them automatically when they sign up with it.
         </p>
@@ -457,7 +458,7 @@ function PaymentForm({
         e.preventDefault();
         submit(onPayment);
       }}
-      className="flex flex-wrap items-end gap-2 rounded-xl bg-stone-50 p-3"
+      className="flex flex-wrap items-end gap-2 rounded-xl bg-muted/50 p-3"
     >
       <div className="w-28">
         <Input
@@ -487,7 +488,7 @@ function PaymentForm({
       {balanceCents > 0 && (
         <button
           type="button"
-          className="text-xs text-stone-500 underline"
+          className="text-xs text-muted-foreground underline"
           onClick={() => setAmount((balanceCents / 100).toFixed(2))}
         >
           settle {money(balanceCents, currency)}
@@ -512,8 +513,8 @@ function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
   if (!items) return <Spinner />;
 
   return (
-    <Card className="divide-y divide-stone-100 p-0">
-      {items.length === 0 && <p className="p-3 text-sm text-stone-500">No activity yet.</p>}
+    <Card className="divide-y divide-border p-0">
+      {items.length === 0 && <p className="p-3 text-sm text-muted-foreground">No activity yet.</p>}
       {items.map((h) => (
         <div key={h.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
           <span className="min-w-0">
@@ -527,10 +528,10 @@ function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
                   : `had ${h.optionName ?? "an item"}${
                       h.amountCents != null ? ` (${money(h.amountCents, currency)})` : ""
                     }`}
-            {h.byManager && <span className="ml-1 text-xs text-stone-400">by {h.actorName}</span>}
-            {h.note && <span className="ml-1 text-xs text-stone-400">({h.note})</span>}
+            {h.byManager && <span className="ml-1 text-xs text-muted-foreground">by {h.actorName}</span>}
+            {h.note && <span className="ml-1 text-xs text-muted-foreground">({h.note})</span>}
           </span>
-          <span className="shrink-0 text-xs text-stone-400">{timeAgo(h.createdAt)}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(h.createdAt)}</span>
         </div>
       ))}
     </Card>
@@ -580,6 +581,28 @@ function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
     }
   }
 
+  async function move(index: number, delta: -1 | 1) {
+    if (!options) return;
+    const ids = options.map((o) => o.id);
+    const target = index + delta;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    // Optimistic reorder for a snappy feel
+    setOptions((prev) => {
+      if (!prev) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+    setError("");
+    try {
+      await api.put(`/api/accounts/${slug}/options/order`, { optionIds: ids });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to reorder");
+      load();
+    }
+  }
+
   if (!options) return <Spinner />;
 
   return (
@@ -618,15 +641,33 @@ function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
         </form>
       </Card>
 
-      {options.map((o) => (
-        <Card key={o.id} className={`flex items-center justify-between ${o.archived ? "opacity-50" : ""}`}>
-          <div className="min-w-0">
+      {options.map((o, i) => (
+        <Card key={o.id} className={`flex items-center justify-between gap-2 ${o.archived ? "opacity-50" : ""}`}>
+          <div className="flex shrink-0 flex-col">
+            <button
+              aria-label={`Move ${o.name} up`}
+              disabled={i === 0}
+              onClick={() => void move(i, -1)}
+              className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+            >
+              <ChevronUp className="size-4" />
+            </button>
+            <button
+              aria-label={`Move ${o.name} down`}
+              disabled={i === options.length - 1}
+              onClick={() => void move(i, 1)}
+              className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+            >
+              <ChevronDown className="size-4" />
+            </button>
+          </div>
+          <div className="min-w-0 flex-1">
             <div className="font-semibold">
               {o.name}
-              {o.archived && <span className="ml-2 text-xs text-stone-500">archived</span>}
+              {o.archived && <span className="ml-2 text-xs text-muted-foreground">archived</span>}
             </div>
-            {o.description && <div className="truncate text-xs text-stone-500">{o.description}</div>}
-            <div className="text-sm text-stone-600">
+            {o.description && <div className="truncate text-xs text-muted-foreground">{o.description}</div>}
+            <div className="text-sm text-muted-foreground">
               {o.priceCents != null ? money(o.priceCents, currency) : "no price"}
             </div>
           </div>
@@ -760,12 +801,12 @@ function SettingsTab({
         <form onSubmit={save} className="space-y-3">
           <Input label="Name" required value={name} onChange={(e) => setName(e.target.value)} />
           <label className="block text-sm">
-            <span className="mb-1 block font-medium text-stone-700">Description</span>
+            <span className="mb-1 block font-medium text-foreground">Description</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-300/50"
+              className="w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
             />
           </label>
           <Input
@@ -776,20 +817,20 @@ function SettingsTab({
           />
           <Select
             label="Currency"
-            options={config.currencies}
+            options={config.currencies.map(currencyOption)}
             value={currency}
             onValueChange={setCurrency}
           />
           <div className="flex items-center gap-3">
             <Button type="submit">Save</Button>
-            {saved && <span className="text-sm text-emerald-700">Saved ✓</span>}
+            {saved && <span className="text-sm text-emerald-600 dark:text-emerald-400">Saved ✓</span>}
           </div>
         </form>
       </Card>
 
       <Card>
         <h3 className="mb-2 font-bold">Share</h3>
-        <p className="mb-3 break-all text-sm text-stone-600">{publicUrl}</p>
+        <p className="mb-3 break-all text-sm text-muted-foreground">{publicUrl}</p>
         {qr && (
           <div className="flex flex-col items-start gap-2">
             <img src={qr} alt="QR code for account page" className="w-40 rounded-lg border" />
@@ -802,7 +843,7 @@ function SettingsTab({
             </a>
           </div>
         )}
-        <div className="mt-3 border-t border-stone-100 pt-3">
+        <div className="mt-3 border-t border-border pt-3">
           <a href={`/api/accounts/${slug}/export.csv`} className="text-sm font-semibold underline">
             Export ledger as CSV
           </a>
@@ -814,14 +855,14 @@ function SettingsTab({
         {managers?.owner && (
           <p className="text-sm">
             <strong>{managers.owner.name}</strong>{" "}
-            <span className="text-xs text-stone-500">owner · {managers.owner.email}</span>
+            <span className="text-xs text-muted-foreground">owner · {managers.owner.email}</span>
           </p>
         )}
         {managers?.managers.map((m) => (
           <p key={m.id} className="mt-1 flex items-center justify-between text-sm">
             <span>
               <strong>{m.name}</strong>{" "}
-              <span className="text-xs text-stone-500">{m.email}</span>
+              <span className="text-xs text-muted-foreground">{m.email}</span>
             </span>
             {data.isOwner && (
               <button

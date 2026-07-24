@@ -1,3 +1,22 @@
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  CAD: "$",
+  USD: "$",
+  EUR: "€",
+  GBP: "£",
+  AUD: "$",
+  NZD: "$",
+  CHF: "Fr",
+  SEK: "kr",
+  NOK: "kr",
+  DKK: "kr",
+};
+
+/** Dropdown label like "$ (CAD)". */
+export function currencyOption(code: string): { value: string; label: string } {
+  const symbol = CURRENCY_SYMBOLS[code] ?? code;
+  return { value: code, label: `${symbol} (${code})` };
+}
+
 export function money(cents: number, currency: string): string {
   try {
     return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(cents / 100);
