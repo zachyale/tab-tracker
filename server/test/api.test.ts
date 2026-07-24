@@ -150,6 +150,40 @@ describe("options", () => {
     const { json } = await get("/api/accounts/home");
     expect(json.options.map((o: Json) => o.name).sort()).toEqual(["Guinness pint", "Seltzer"]);
   });
+
+  it("managers reorder options; order is reflected everywhere", async () => {
+    const reversed = await call("PUT", "/api/accounts/home/options/order", {
+      body: { optionIds: [unpricedId, pintId] },
+      cookie: zach,
+    });
+    expect(reversed.status).toBe(200);
+    let { json } = await get("/api/accounts/home");
+    expect(json.options.map((o: Json) => o.name)).toEqual(["Seltzer", "Guinness pint"]);
+
+    // restore original order for later tests
+    await call("PUT", "/api/accounts/home/options/order", {
+      body: { optionIds: [pintId, unpricedId] },
+      cookie: zach,
+    });
+    ({ json } = await get("/api/accounts/home"));
+    expect(json.options.map((o: Json) => o.name)).toEqual(["Guinness pint", "Seltzer"]);
+  });
+
+  it("rejects reorders that don't cover the exact option set", async () => {
+    const { status } = await call("PUT", "/api/accounts/home/options/order", {
+      body: { optionIds: [pintId] },
+      cookie: zach,
+    });
+    expect(status).toBe(400);
+  });
+
+  it("only managers can reorder", async () => {
+    const { status } = await call("PUT", "/api/accounts/home/options/order", {
+      body: { optionIds: [pintId, unpricedId] },
+      cookie: alice,
+    });
+    expect(status).toBe(403);
+  });
 });
 
 describe("ledger entries", () => {

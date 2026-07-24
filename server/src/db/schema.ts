@@ -109,6 +109,7 @@ export const options = sqliteTable(
     // null = unpriced (track quantity only)
     priceCents: integer("price_cents"),
     archived: integer("archived", { mode: "boolean" }).notNull().default(false),
+    position: integer("position").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (t) => [index("option_account_idx").on(t.accountId)]
