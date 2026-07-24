@@ -59,20 +59,21 @@ export function Select({
   onValueChange,
 }: {
   label?: string;
-  options: string[];
+  options: (string | { value: string; label: string })[];
   value: string;
   onValueChange: (value: string) => void;
 }) {
   const id = useId();
+  const normalized = options.map((o) => (typeof o === "string" ? { value: o, label: o } : o));
   const select = (
     <UiSelect value={value} onValueChange={onValueChange}>
       <SelectTrigger id={id} className="w-full">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {options.map((o) => (
-          <SelectItem key={o} value={o}>
-            {o}
+        {normalized.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
           </SelectItem>
         ))}
       </SelectContent>

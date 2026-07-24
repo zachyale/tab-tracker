@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useConfig } from "../App";
 import { api, ApiError } from "../lib/api";
+import { currencyOption } from "../lib/format";
 import { Button, Card, ErrorNote, Input, Select } from "../components/fields";
 
 export function slugify(name: string): string {
@@ -69,23 +70,23 @@ export default function NewAccount() {
             }}
           />
           {slug && (
-            <p className="-mt-2 text-xs text-stone-500">
+            <p className="-mt-2 text-xs text-muted-foreground">
               Your account will live at <code>/accounts/{slug}</code>
             </p>
           )}
           <label className="block text-sm">
-            <span className="mb-1 block font-medium text-stone-700">Description</span>
+            <span className="mb-1 block font-medium text-foreground">Description</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
               placeholder="The Guinness keg in the garage"
-              className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-300/50"
+              className="w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
             />
           </label>
           <Select
             label="Currency"
-            options={config.currencies}
+            options={config.currencies.map(currencyOption)}
             value={currency}
             onValueChange={setCurrency}
           />
