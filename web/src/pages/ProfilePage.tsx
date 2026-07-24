@@ -50,7 +50,7 @@ export default function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-md space-y-4">
-      <h1 className="text-2xl font-bold">Your profile</h1>
+      <h1 className="text-2xl font-bold">Edit profile</h1>
 
       <Card>
         <form onSubmit={saveName} className="space-y-3">

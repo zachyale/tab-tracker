@@ -78,7 +78,7 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Instance admin</h1>
+      <h1 className="text-2xl font-bold">Admin settings</h1>
       <ErrorNote>{error}</ErrorNote>
       {notice && (
         <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
