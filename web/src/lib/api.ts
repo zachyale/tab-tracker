@@ -71,13 +71,32 @@ export type ManagedSummary = {
   memberCount: number;
 };
 
-export type Option = {
+export type ItemOption = {
   id: string;
-  name: string;
+  // null = anonymous variant (an item's sole option)
+  name: string | null;
   description: string;
   priceCents: number | null;
   archived?: boolean;
 };
+
+export type Item = {
+  id: string;
+  name: string;
+  description: string;
+  archived?: boolean;
+  options: ItemOption[];
+};
+
+/** Flat list of trackable options with display labels ("Iced tea — Small"). */
+export function flattenItems(items: Item[]): { id: string; label: string }[] {
+  return items.flatMap((item) =>
+    item.options.map((o) => ({
+      id: o.id,
+      label: o.name ? `${item.name} — ${o.name}` : item.name,
+    }))
+  );
+}
 
 export type AccountPageData = {
   account: {
@@ -87,7 +106,7 @@ export type AccountPageData = {
     slug: string;
     currency: string;
   };
-  options: Option[];
+  items: Item[];
   isManager: boolean;
   isOwner: boolean;
   mine: {
@@ -112,6 +131,8 @@ export type Member = {
 export type ActivityItem = {
   id: string;
   kind: "consume" | "undo" | "payment" | "charge";
+  // Consecutive identical consume/undo entries are grouped server-side.
+  count: number;
   amountCents: number | null;
   note: string | null;
   createdAt: number;

@@ -97,8 +97,12 @@ export const accountManagers = sqliteTable(
   (t) => [primaryKey({ columns: [t.accountId, t.userId] })]
 );
 
-export const options = sqliteTable(
-  "option",
+// An item is a shared thing (e.g. "Cold brew"); its options are the trackable
+// variants (e.g. "Large" / "Small"). A single option may be fully
+// anonymous (no name, no price); with multiple options each needs a name or a
+// price so they can be told apart.
+export const items = sqliteTable(
+  "item",
   {
     id: text("id").primaryKey(),
     accountId: text("account_id")
@@ -106,13 +110,33 @@ export const options = sqliteTable(
       .references(() => tabAccounts.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     description: text("description").notNull().default(""),
+    archived: integer("archived", { mode: "boolean" }).notNull().default(false),
+    position: integer("position").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [index("item_account_idx").on(t.accountId)]
+);
+
+export const options = sqliteTable(
+  "option",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => tabAccounts.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    // null = anonymous variant (only valid as an item's sole option)
+    name: text("name"),
+    description: text("description").notNull().default(""),
     // null = unpriced (track quantity only)
     priceCents: integer("price_cents"),
     archived: integer("archived", { mode: "boolean" }).notNull().default(false),
     position: integer("position").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
-  (t) => [index("option_account_idx").on(t.accountId)]
+  (t) => [index("option_account_idx").on(t.accountId), index("option_item_idx").on(t.itemId)]
 );
 
 // Append-only ledger. kind:

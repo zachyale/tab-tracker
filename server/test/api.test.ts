@@ -122,64 +122,148 @@ describe("accounts", () => {
   });
 });
 
-// Option ids used across suites.
+// Item/option ids used across suites.
+let brewItemId: string;
 let brewId: string;
+let sparklingItemId: string;
 let unpricedId: string;
 
-describe("options", () => {
-  it("managers create options; non-managers cannot", async () => {
+describe("items & options", () => {
+  it("managers create items; non-managers cannot", async () => {
     expect(
-      (await post("/api/accounts/home/options", { name: "Nope" }, alice)).status
+      (await post("/api/accounts/home/items", { name: "Nope", options: [{}] }, alice)).status
     ).toBe(403);
     const brew = await post(
-      "/api/accounts/home/options",
-      { name: "Cold brew", priceCents: 300 },
+      "/api/accounts/home/items",
+      { name: "Cold brew", options: [{ priceCents: 300 }] },
       zach
     );
     expect(brew.status).toBe(201);
-    brewId = brew.json.id;
+    brewItemId = brew.json.id;
     const sparkling = await post(
-      "/api/accounts/home/options",
-      { name: "Sparkling water", priceCents: null },
+      "/api/accounts/home/items",
+      { name: "Sparkling water", options: [{}] },
       zach
     );
-    unpricedId = sparkling.json.id;
-  });
+    sparklingItemId = sparkling.json.id;
 
-  it("lists active options publicly", async () => {
     const { json } = await get("/api/accounts/home");
-    expect(json.options.map((o: Json) => o.name).sort()).toEqual(["Cold brew", "Sparkling water"]);
+    brewId = json.items.find((i: Json) => i.name === "Cold brew").options[0].id;
+    unpricedId = json.items.find((i: Json) => i.name === "Sparkling water").options[0].id;
+    expect(brewId).toBeTruthy();
+    expect(unpricedId).toBeTruthy();
   });
 
-  it("managers reorder options; order is reflected everywhere", async () => {
-    const reversed = await call("PUT", "/api/accounts/home/options/order", {
-      body: { optionIds: [unpricedId, brewId] },
-      cookie: zach,
-    });
-    expect(reversed.status).toBe(200);
-    let { json } = await get("/api/accounts/home");
-    expect(json.options.map((o: Json) => o.name)).toEqual(["Sparkling water", "Cold brew"]);
+  it("lists active items publicly, with nested options", async () => {
+    const { json } = await get("/api/accounts/home");
+    expect(json.items.map((i: Json) => i.name).sort()).toEqual(["Cold brew", "Sparkling water"]);
+    const brew = json.items.find((i: Json) => i.name === "Cold brew");
+    expect(brew.options).toHaveLength(1);
+    expect(brew.options[0].name).toBeNull();
+    expect(brew.options[0].priceCents).toBe(300);
+  });
 
-    // restore original order for later tests
-    await call("PUT", "/api/accounts/home/options/order", {
-      body: { optionIds: [brewId, unpricedId] },
+  it("supports multi-option items (two items, two sizes)", async () => {
+    const icedTea = await post(
+      "/api/accounts/home/items",
+      {
+        name: "Iced tea",
+        description: "Second tap",
+        options: [
+          { name: "Large", priceCents: 500 },
+          { name: "Small", priceCents: 250 },
+        ],
+      },
+      zach
+    );
+    expect(icedTea.status).toBe(201);
+    const { json } = await get("/api/accounts/home");
+    const item = json.items.find((i: Json) => i.name === "Iced tea");
+    expect(item.options.map((o: Json) => o.name)).toEqual(["Large", "Small"]);
+  });
+
+  it("requires a name or price on every option once an item has several", async () => {
+    // two anonymous options at creation
+    const bad = await post(
+      "/api/accounts/home/items",
+      { name: "Bundle", options: [{ priceCents: 100 }, {}] },
+      zach
+    );
+    expect(bad.status).toBe(400);
+
+    // adding a sibling when the existing sole option has no name and no price
+    const add = await post(
+      `/api/accounts/home/items/${sparklingItemId}/options`,
+      { name: "Small", priceCents: 150 },
+      zach
+    );
+    expect(add.status).toBe(400);
+
+    // fine when the existing sole option has a price (it stays identifiable)
+    const ok = await post(
+      `/api/accounts/home/items/${brewItemId}/options`,
+      { name: "Small", priceCents: 150 },
+      zach
+    );
+    expect(ok.status).toBe(201);
+
+    // stripping name+price from an option that has siblings
+    const { json } = await get("/api/accounts/home");
+    const icedTeaFull = json.items
+      .find((i: Json) => i.name === "Iced tea")
+      .options.find((o: Json) => o.name === "Large");
+    const strip = await patch(
+      `/api/accounts/home/options/${icedTeaFull.id}`,
+      { name: null, priceCents: null },
+      zach
+    );
+    expect(strip.status).toBe(400);
+  });
+
+  it("refuses to archive an item's last active option", async () => {
+    const { status, json } = await patch(
+      `/api/accounts/home/options/${unpricedId}`,
+      { archived: true },
+      zach
+    );
+    expect(status).toBe(409);
+    expect(json.error).toContain("archive the item");
+  });
+
+  it("managers reorder items; order is reflected everywhere", async () => {
+    const items = (await get("/api/accounts/home/items", zach)).json.items;
+    const ids = items.map((i: Json) => i.id);
+    const reversed = [...ids].reverse();
+    expect(
+      (await call("PUT", "/api/accounts/home/items/order", {
+        body: { itemIds: reversed },
+        cookie: zach,
+      })).status
+    ).toBe(200);
+    let { json } = await get("/api/accounts/home");
+    expect(json.items[0].id).toBe(reversed[0]);
+
+    // restore original order
+    await call("PUT", "/api/accounts/home/items/order", {
+      body: { itemIds: ids },
       cookie: zach,
     });
     ({ json } = await get("/api/accounts/home"));
-    expect(json.options.map((o: Json) => o.name)).toEqual(["Cold brew", "Sparkling water"]);
+    expect(json.items[0].id).toBe(ids[0]);
   });
 
-  it("rejects reorders that don't cover the exact option set", async () => {
-    const { status } = await call("PUT", "/api/accounts/home/options/order", {
-      body: { optionIds: [brewId] },
+  it("rejects reorders that don't cover the exact item set", async () => {
+    const { status } = await call("PUT", "/api/accounts/home/items/order", {
+      body: { itemIds: [brewItemId] },
       cookie: zach,
     });
     expect(status).toBe(400);
   });
 
   it("only managers can reorder", async () => {
-    const { status } = await call("PUT", "/api/accounts/home/options/order", {
-      body: { optionIds: [brewId, unpricedId] },
+    const items = (await get("/api/accounts/home/items", zach)).json.items;
+    const { status } = await call("PUT", "/api/accounts/home/items/order", {
+      body: { itemIds: items.map((i: Json) => i.id) },
       cookie: alice,
     });
     expect(status).toBe(403);
@@ -247,8 +331,36 @@ describe("ledger entries", () => {
     expect(status).toBe(403);
   });
 
-  it("blocks incrementing archived options", async () => {
-    await patch(`/api/accounts/home/options/${unpricedId}`, { archived: true }, zach);
+  it("records batched taps as one request (count)", async () => {
+    const inc = await post(
+      "/api/accounts/home/entries",
+      { optionId: brewId, action: "increment", count: 3 },
+      alice
+    );
+    // 2 servings on the tab before this (300 + 400), +3 at current price 400
+    expect(inc.json.quantities[brewId]).toBe(5);
+    const dec = await post(
+      "/api/accounts/home/entries",
+      { optionId: brewId, action: "decrement", count: 3 },
+      alice
+    );
+    expect(dec.json.quantities[brewId]).toBe(2);
+    expect(dec.json.balanceCents).toBe(700);
+  });
+
+  it("groups batched entries in the activity feed", async () => {
+    const { json } = await get("/api/accounts/home/activity?mine=1", alice);
+    // the batched decrement of 3 shows as one grouped line
+    const undos = json.activity.find((a: Json) => a.kind === "undo" && a.count === 3);
+    expect(undos).toBeTruthy();
+    expect(undos.optionName).toBe("Cold brew");
+    // batched entries group too (older same-priced entries may join the group)
+    const consumes = json.activity.find((a: Json) => a.kind === "consume" && a.count >= 3);
+    expect(consumes).toBeTruthy();
+  });
+
+  it("blocks incrementing options of archived items", async () => {
+    await patch(`/api/accounts/home/items/${sparklingItemId}`, { archived: true }, zach);
     const { status } = await post(
       "/api/accounts/home/entries",
       { optionId: unpricedId, action: "increment" },

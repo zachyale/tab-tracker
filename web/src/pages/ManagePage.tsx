@@ -5,10 +5,12 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import {
   api,
   ApiError,
+  flattenItems,
   type AccountPageData,
   type ActivityItem,
+  type Item,
+  type ItemOption,
   type Member,
-  type Option,
 } from "../lib/api";
 import { useConfig } from "../App";
 import { balanceLabel, currencyOption, money, timeAgo } from "../lib/format";
@@ -43,7 +45,7 @@ export default function ManagePage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "members", label: "Members" },
     { id: "activity", label: "Activity" },
-    { id: "options", label: "Options" },
+    { id: "options", label: "Items" },
     { id: "settings", label: "Settings" },
   ];
 
@@ -74,7 +76,7 @@ export default function ManagePage() {
 
       {tab === "members" && <MembersTab slug={slug!} data={data} />}
       {tab === "activity" && <ActivityTab slug={slug!} currency={data.account.currency} />}
-      {tab === "options" && <OptionsTab slug={slug!} currency={data.account.currency} />}
+      {tab === "options" && <ItemsTab slug={slug!} currency={data.account.currency} />}
       {tab === "settings" && <SettingsTab slug={slug!} data={data} onSaved={load} />}
     </div>
   );
@@ -244,9 +246,9 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
 
           {expanded === m.id && (
             <div className="space-y-3 border-t border-border pt-3">
-              {data.options.map((o) => (
+              {flattenItems(data.items).map((o) => (
                 <div key={o.id} className="flex items-center justify-between text-sm">
-                  <span>{o.name}</span>
+                  <span>{o.label}</span>
                   <span className="flex items-center gap-2">
                     <button
                       onClick={() => void adjust(m.id, o.id, "decrement")}
@@ -524,9 +526,11 @@ function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
               : h.kind === "charge"
                 ? `was charged ${money(h.amountCents ?? 0, currency)}`
                 : h.kind === "undo"
-                  ? `removed ${h.optionName ?? "an item"}`
-                  : `had ${h.optionName ?? "an item"}${
-                      h.amountCents != null ? ` (${money(h.amountCents, currency)})` : ""
+                  ? `removed ${h.optionName ?? "an item"}${h.count > 1 ? ` ×${h.count}` : ""}`
+                  : `had ${h.optionName ?? "an item"}${h.count > 1 ? ` ×${h.count}` : ""}${
+                      h.amountCents != null
+                        ? ` (${money(h.amountCents * h.count, currency)})`
+                        : ""
                     }`}
             {h.byManager && <span className="ml-1 text-xs text-muted-foreground">by {h.actorName}</span>}
             {h.note && <span className="ml-1 text-xs text-muted-foreground">({h.note})</span>}
@@ -540,80 +544,98 @@ function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
 
 // ---------------------------------------------------------------------------
 
-function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
-  const [options, setOptions] = useState<(Option & { archived: boolean })[] | null>(null);
+function parsePrice(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const cents = Math.round(parseFloat(trimmed) * 100);
+  return Number.isFinite(cents) && cents >= 0 ? cents : null;
+}
+
+type ItemDialog =
+  | { kind: "edit-item"; item: Item }
+  | { kind: "add-option"; item: Item }
+  | { kind: "edit-option"; item: Item; option: ItemOption }
+  | null;
+
+function ItemsTab({ slug, currency }: { slug: string; currency: string }) {
+  const [items, setItems] = useState<Item[] | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [dialog, setDialog] = useState<ItemDialog>(null);
   const [error, setError] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [firstOptionName, setFirstOptionName] = useState("");
   const [price, setPrice] = useState("");
-  const [priceDialog, setPriceDialog] = useState<Option | null>(null);
 
   const load = useCallback(() => {
     api
-      .get<{ options: (Option & { archived: boolean })[] }>(`/api/accounts/${slug}/options`)
-      .then((r) => setOptions(r.options))
+      .get<{ items: Item[] }>(`/api/accounts/${slug}/items`)
+      .then((r) => setItems(r.items))
       .catch((e) => setError(e.message));
   }, [slug]);
   useEffect(load, [load]);
 
-  async function add(e: FormEvent) {
+  async function run(fn: () => Promise<unknown>) {
+    setError("");
+    try {
+      await fn();
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed");
+    }
+  }
+
+  async function addItem(e: FormEvent) {
     e.preventDefault();
-    setError("");
-    const priceCents = price.trim() === "" ? null : Math.round(parseFloat(price) * 100);
-    try {
-      await api.post(`/api/accounts/${slug}/options`, { name, description, priceCents });
-      setName("");
-      setDescription("");
-      setPrice("");
-      load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed");
-    }
+    await run(() =>
+      api.post(`/api/accounts/${slug}/items`, {
+        name,
+        description,
+        options: [{ name: firstOptionName.trim() || null, priceCents: parsePrice(price) }],
+      })
+    );
+    setName("");
+    setDescription("");
+    setFirstOptionName("");
+    setPrice("");
   }
 
-  async function update(id: string, patch: Record<string, unknown>) {
-    setError("");
-    try {
-      await api.patch(`/api/accounts/${slug}/options/${id}`, patch);
-      load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed");
-    }
+  async function move(itemId: string, delta: -1 | 1) {
+    if (!items) return;
+    const visible = visibleItems;
+    const vIdx = visible.findIndex((i) => i.id === itemId);
+    const neighbour = visible[vIdx + delta];
+    if (!neighbour) return;
+    const ids = items.map((i) => i.id);
+    const a = ids.indexOf(itemId);
+    const b = ids.indexOf(neighbour.id);
+    [ids[a], ids[b]] = [ids[b], ids[a]];
+    await run(() => api.put(`/api/accounts/${slug}/items/order`, { itemIds: ids }));
   }
 
-  async function move(index: number, delta: -1 | 1) {
-    if (!options) return;
-    const ids = options.map((o) => o.id);
-    const target = index + delta;
-    if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target], ids[index]];
-    // Optimistic reorder for a snappy feel
-    setOptions((prev) => {
-      if (!prev) return prev;
-      const next = [...prev];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-    setError("");
-    try {
-      await api.put(`/api/accounts/${slug}/options/order`, { optionIds: ids });
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to reorder");
-      load();
-    }
-  }
+  if (!items) return <Spinner />;
 
-  if (!options) return <Spinner />;
+  const archivedCount =
+    items.filter((i) => i.archived).length +
+    items.filter((i) => !i.archived).flatMap((i) => i.options.filter((o) => o.archived)).length;
+  const visibleItems = showArchived
+    ? items
+    : items
+        .filter((i) => !i.archived)
+        .map((i) => ({ ...i, options: i.options.filter((o) => !o.archived) }));
+
+  const priceLabel = (cents: number | null) =>
+    cents != null ? money(cents, currency) : "no price";
 
   return (
     <div className="space-y-3">
       <ErrorNote>{error}</ErrorNote>
       <Card>
-        <form onSubmit={add} className="space-y-2">
+        <form onSubmit={addItem} className="space-y-2">
           <div className="flex gap-2">
             <div className="flex-1">
               <Input
-                label="New option"
+                label="New item"
                 required
                 placeholder="Cold brew"
                 value={name}
@@ -632,83 +654,234 @@ function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
               />
             </div>
           </div>
-          <Input
-            placeholder="Description (optional)"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <Button type="submit">Add option</Button>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <Input
+                placeholder="Description (optional)"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </div>
+            <div className="w-40">
+              <Input
+                placeholder="Option label, e.g. Large"
+                value={firstOptionName}
+                onChange={(e) => setFirstOptionName(e.target.value)}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Items can have several options (say, large and small sizes) — add more from the item
+            card below.
+          </p>
+          <Button type="submit">Add item</Button>
         </form>
       </Card>
 
-      {options.map((o, i) => (
-        <Card key={o.id} className={`flex items-center justify-between gap-2 ${o.archived ? "opacity-50" : ""}`}>
-          <div className="flex shrink-0 flex-col">
-            <button
-              aria-label={`Move ${o.name} up`}
-              disabled={i === 0}
-              onClick={() => void move(i, -1)}
-              className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
-            >
-              <ChevronUp className="size-4" />
-            </button>
-            <button
-              aria-label={`Move ${o.name} down`}
-              disabled={i === options.length - 1}
-              onClick={() => void move(i, 1)}
-              className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
-            >
-              <ChevronDown className="size-4" />
-            </button>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="font-semibold">
-              {o.name}
-              {o.archived && <span className="ml-2 text-xs text-muted-foreground">archived</span>}
+      {visibleItems.map((item, i) => (
+        <Card key={item.id} className={`space-y-2 ${item.archived ? "opacity-60" : ""}`}>
+          <div className="flex items-center gap-2">
+            <div className="flex shrink-0 flex-col">
+              <button
+                aria-label={`Move ${item.name} up`}
+                disabled={i === 0}
+                onClick={() => void move(item.id, -1)}
+                className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+              >
+                <ChevronUp className="size-4" />
+              </button>
+              <button
+                aria-label={`Move ${item.name} down`}
+                disabled={i === visibleItems.length - 1}
+                onClick={() => void move(item.id, 1)}
+                className="px-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+              >
+                <ChevronDown className="size-4" />
+              </button>
             </div>
-            {o.description && <div className="truncate text-xs text-muted-foreground">{o.description}</div>}
-            <div className="text-sm text-muted-foreground">
-              {o.priceCents != null ? money(o.priceCents, currency) : "no price"}
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold">
+                {item.name}
+                {item.archived && (
+                  <Badge variant="secondary" className="ml-2">
+                    archived
+                  </Badge>
+                )}
+              </div>
+              {item.description && (
+                <div className="truncate text-xs text-muted-foreground">{item.description}</div>
+              )}
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setDialog({ kind: "edit-item", item })}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  void run(() =>
+                    api.patch(`/api/accounts/${slug}/items/${item.id}`, {
+                      archived: !item.archived,
+                    })
+                  )
+                }
+              >
+                {item.archived ? "Restore" : "Archive"}
+              </Button>
             </div>
           </div>
-          <div className="flex shrink-0 gap-2">
-            <Button variant="secondary" onClick={() => setPriceDialog(o)}>
-              Price
-            </Button>
-            <Button variant="secondary" onClick={() => void update(o.id, { archived: !o.archived })}>
-              {o.archived ? "Restore" : "Archive"}
-            </Button>
+
+          <div className="divide-y divide-border border-t border-border">
+            {item.options.map((o) => (
+              <div key={o.id} className="flex items-center justify-between gap-2 py-2 pl-7">
+                <div className="min-w-0 text-sm">
+                  <span className={o.archived ? "opacity-60" : ""}>
+                    {o.name ?? <em className="text-muted-foreground">unnamed</em>}{" "}
+                    <span className="text-muted-foreground">· {priceLabel(o.priceCents)}</span>
+                    {o.archived && (
+                      <span className="ml-1 text-xs text-muted-foreground">(archived)</span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex shrink-0 gap-3 text-xs">
+                  <button
+                    className="text-muted-foreground underline"
+                    onClick={() => setDialog({ kind: "edit-option", item, option: o })}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="text-muted-foreground underline"
+                    onClick={() =>
+                      void run(() =>
+                        api.patch(`/api/accounts/${slug}/options/${o.id}`, {
+                          archived: !o.archived,
+                        })
+                      )
+                    }
+                  >
+                    {o.archived ? "Restore" : "Archive"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="py-2 pl-7">
+              <button
+                className="text-xs text-muted-foreground underline"
+                onClick={() => setDialog({ kind: "add-option", item })}
+              >
+                + Add option
+              </button>
+            </div>
           </div>
         </Card>
       ))}
 
+      {archivedCount > 0 && (
+        <button
+          className="text-sm text-muted-foreground underline"
+          onClick={() => setShowArchived(!showArchived)}
+        >
+          {showArchived
+            ? "Hide archived"
+            : `Show archived (${archivedCount})`}
+        </button>
+      )}
+
       <PromptDialog
-        open={priceDialog !== null}
-        onOpenChange={(o) => !o && setPriceDialog(null)}
-        title={priceDialog ? `Set price for "${priceDialog.name}"` : ""}
-        description="Leave blank for no price. Existing tabs keep the prices recorded at the time of each entry."
+        open={dialog?.kind === "edit-item"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={dialog?.kind === "edit-item" ? `Edit "${dialog.item.name}"` : ""}
         fields={
-          priceDialog
+          dialog?.kind === "edit-item"
             ? [
+                { name: "name", label: "Name", defaultValue: dialog.item.name, required: true },
                 {
-                  name: "price",
-                  label: `Price (${currency})`,
-                  type: "number",
-                  placeholder: "none",
-                  defaultValue:
-                    priceDialog.priceCents != null
-                      ? (priceDialog.priceCents / 100).toFixed(2)
-                      : "",
+                  name: "description",
+                  label: "Description",
+                  defaultValue: dialog.item.description,
                 },
               ]
             : []
         }
         onSubmit={(values) => {
-          if (!priceDialog) return;
-          const raw = values.price.trim();
-          const priceCents = raw === "" ? null : Math.round(parseFloat(raw) * 100);
-          if (priceCents !== null && !Number.isFinite(priceCents)) return;
-          void update(priceDialog.id, { priceCents });
+          if (dialog?.kind !== "edit-item") return;
+          void run(() =>
+            api.patch(`/api/accounts/${slug}/items/${dialog.item.id}`, {
+              name: values.name,
+              description: values.description,
+            })
+          );
+        }}
+      />
+      <PromptDialog
+        open={dialog?.kind === "add-option"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={dialog?.kind === "add-option" ? `Add option to "${dialog.item.name}"` : ""}
+        description="With multiple options, each needs a name or a price. Think sizes: Large, Small…"
+        fields={[
+          { name: "name", label: "Option name", placeholder: "Large" },
+          { name: "price", label: `Price (${currency}, optional)`, type: "number" },
+          { name: "description", label: "Description (optional)" },
+        ]}
+        submitLabel="Add option"
+        onSubmit={(values) => {
+          if (dialog?.kind !== "add-option") return;
+          void run(() =>
+            api.post(`/api/accounts/${slug}/items/${dialog.item.id}/options`, {
+              name: values.name.trim() || null,
+              description: values.description,
+              priceCents: parsePrice(values.price),
+            })
+          );
+        }}
+      />
+      <PromptDialog
+        open={dialog?.kind === "edit-option"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={
+          dialog?.kind === "edit-option"
+            ? `Edit ${dialog.option.name ?? "option"} (${dialog.item.name})`
+            : ""
+        }
+        description="Price changes apply to future entries only — recorded tabs keep their prices."
+        fields={
+          dialog?.kind === "edit-option"
+            ? [
+                {
+                  name: "name",
+                  label: "Option name",
+                  defaultValue: dialog.option.name ?? "",
+                },
+                {
+                  name: "price",
+                  label: `Price (${currency})`,
+                  type: "number",
+                  defaultValue:
+                    dialog.option.priceCents != null
+                      ? (dialog.option.priceCents / 100).toFixed(2)
+                      : "",
+                },
+                {
+                  name: "description",
+                  label: "Description",
+                  defaultValue: dialog.option.description,
+                },
+              ]
+            : []
+        }
+        onSubmit={(values) => {
+          if (dialog?.kind !== "edit-option") return;
+          void run(() =>
+            api.patch(`/api/accounts/${slug}/options/${dialog.option.id}`, {
+              name: values.name.trim() || null,
+              description: values.description,
+              priceCents: parsePrice(values.price),
+            })
+          );
         }}
       />
     </div>

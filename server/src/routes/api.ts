@@ -284,13 +284,6 @@ api.get("/accounts/:slug", (c) => {
   const account = c.get("account");
   const user = c.get("user");
 
-  const activeOptions = db
-    .select()
-    .from(schema.options)
-    .where(and(eq(schema.options.accountId, account.id), eq(schema.options.archived, false)))
-    .orderBy(schema.options.position, schema.options.createdAt)
-    .all();
-
   const mine = user
     ? {
         quantities: quantitiesForUser(account.id, user.id),
@@ -306,12 +299,7 @@ api.get("/accounts/:slug", (c) => {
       slug: account.slug,
       currency: account.currency,
     },
-    options: activeOptions.map((o) => ({
-      id: o.id,
-      name: o.name,
-      description: o.description,
-      priceCents: o.priceCents,
-    })),
+    items: listItems(account.id, { includeArchived: false }),
     isManager: c.get("isManager"),
     isOwner: !!user && account.ownerId === user.id,
     mine,
@@ -426,28 +414,193 @@ api.post("/accounts/:slug/transfer", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Options
+// Items & their options. An item ("Cold brew") groups one or more trackable
+// options ("Large" / "Small"). A sole option may be anonymous; with
+// multiple options each needs a name or a price.
 // ---------------------------------------------------------------------------
 
-const optionBodySchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(100),
+const itemOptionSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .max(100)
+    .nullable()
+    .optional()
+    .transform((v) => (v ? v : null)),
   description: z.string().trim().max(1000).default(""),
   priceCents: z.number().int().min(0).nullable().default(null),
 });
 
-api.post("/accounts/:slug/options", async (c) => {
+const itemBodySchema = z.object({
+  name: z.string().trim().min(1, "Item name is required").max(100),
+  description: z.string().trim().max(1000).default(""),
+  options: z.array(itemOptionSchema).min(1, "An item needs at least one option").max(20),
+});
+
+const MULTI_OPTION_RULE =
+  "When an item has multiple options, each option needs a name or a price";
+
+function violatesOptionRule(
+  options: { name: string | null; priceCents: number | null }[]
+): boolean {
+  return options.length > 1 && options.some((o) => !o.name && o.priceCents == null);
+}
+
+function listItems(accountId: string, { includeArchived }: { includeArchived: boolean }) {
+  const itemRows = db
+    .select()
+    .from(schema.items)
+    .where(
+      includeArchived
+        ? eq(schema.items.accountId, accountId)
+        : and(eq(schema.items.accountId, accountId), eq(schema.items.archived, false))
+    )
+    .orderBy(schema.items.position, schema.items.createdAt)
+    .all();
+  return itemRows.map((item) => ({
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    archived: item.archived,
+    options: db
+      .select()
+      .from(schema.options)
+      .where(
+        includeArchived
+          ? eq(schema.options.itemId, item.id)
+          : and(eq(schema.options.itemId, item.id), eq(schema.options.archived, false))
+      )
+      .orderBy(schema.options.position, schema.options.createdAt)
+      .all()
+      .map((o) => ({
+        id: o.id,
+        name: o.name,
+        description: o.description,
+        priceCents: o.priceCents,
+        archived: o.archived,
+      })),
+  }));
+}
+
+function findItem(accountId: string, itemId: string) {
+  return db
+    .select()
+    .from(schema.items)
+    .where(and(eq(schema.items.id, itemId), eq(schema.items.accountId, accountId)))
+    .get();
+}
+
+function activeOptionsOfItem(itemId: string) {
+  return db
+    .select()
+    .from(schema.options)
+    .where(and(eq(schema.options.itemId, itemId), eq(schema.options.archived, false)))
+    .all();
+}
+
+api.get("/accounts/:slug/items", (c) => {
+  requireManager(c);
+  return c.json({ items: listItems(c.get("account").id, { includeArchived: true }) });
+});
+
+api.post("/accounts/:slug/items", async (c) => {
   requireManager(c);
   const account = c.get("account");
-  const body = optionBodySchema.parse(await c.req.json());
-  const id = nanoid();
+  const body = itemBodySchema.parse(await c.req.json());
+  if (violatesOptionRule(body.options)) return c.json({ error: MULTI_OPTION_RULE }, 400);
+
+  const itemId = nanoid();
   const maxPos = db.get<{ max: number | null }>(
-    dsql`SELECT MAX(position) AS max FROM option WHERE account_id = ${account.id}`
+    dsql`SELECT MAX(position) AS max FROM item WHERE account_id = ${account.id}`
   );
+  db.insert(schema.items)
+    .values({
+      id: itemId,
+      accountId: account.id,
+      name: body.name,
+      description: body.description,
+      position: (maxPos?.max ?? -1) + 1,
+      createdAt: now(),
+    })
+    .run();
+  body.options.forEach((o, index) => {
+    db.insert(schema.options)
+      .values({
+        id: nanoid(),
+        accountId: account.id,
+        itemId,
+        name: o.name,
+        description: o.description,
+        priceCents: o.priceCents,
+        position: index,
+        createdAt: now(),
+      })
+      .run();
+  });
+  return c.json({ id: itemId }, 201);
+});
+
+api.patch("/accounts/:slug/items/:itemId", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const item = findItem(account.id, c.req.param("itemId"));
+  if (!item) return c.json({ error: "Item not found" }, 404);
+  const body = z
+    .object({
+      name: z.string().trim().min(1).max(100).optional(),
+      description: z.string().trim().max(1000).optional(),
+      archived: z.boolean().optional(),
+    })
+    .parse(await c.req.json());
+  db.update(schema.items).set(body).where(eq(schema.items.id, item.id)).run();
+  return c.json({ ok: true });
+});
+
+// Reorder items: the body lists ALL of the account's item ids in order.
+api.put("/accounts/:slug/items/order", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const { itemIds } = z.object({ itemIds: z.array(z.string()).min(1) }).parse(await c.req.json());
+
+  const existing = db
+    .select({ id: schema.items.id })
+    .from(schema.items)
+    .where(eq(schema.items.accountId, account.id))
+    .all()
+    .map((i) => i.id);
+  const sameSet =
+    existing.length === itemIds.length && existing.every((id) => itemIds.includes(id));
+  if (!sameSet)
+    return c.json({ error: "itemIds must contain every item of this account exactly once" }, 400);
+
+  itemIds.forEach((id, index) => {
+    db.update(schema.items).set({ position: index }).where(eq(schema.items.id, id)).run();
+  });
+  return c.json({ ok: true });
+});
+
+api.post("/accounts/:slug/items/:itemId/options", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const item = findItem(account.id, c.req.param("itemId"));
+  if (!item) return c.json({ error: "Item not found" }, 404);
+  const body = itemOptionSchema.parse(await c.req.json());
+
+  const resulting = [...activeOptionsOfItem(item.id), body];
+  if (violatesOptionRule(resulting)) return c.json({ error: MULTI_OPTION_RULE }, 400);
+
+  const maxPos = db.get<{ max: number | null }>(
+    dsql`SELECT MAX(position) AS max FROM option WHERE item_id = ${item.id}`
+  );
+  const id = nanoid();
   db.insert(schema.options)
     .values({
       id,
       accountId: account.id,
-      ...body,
+      itemId: item.id,
+      name: body.name,
+      description: body.description,
+      priceCents: body.priceCents,
       position: (maxPos?.max ?? -1) + 1,
       createdAt: now(),
     })
@@ -455,39 +608,10 @@ api.post("/accounts/:slug/options", async (c) => {
   return c.json({ id }, 201);
 });
 
-// Reorder options: the body lists ALL of the account's option ids in the
-// desired display order.
-api.put("/accounts/:slug/options/order", async (c) => {
-  requireManager(c);
-  const account = c.get("account");
-  const { optionIds } = z
-    .object({ optionIds: z.array(z.string()).min(1) })
-    .parse(await c.req.json());
-
-  const existing = db
-    .select({ id: schema.options.id })
-    .from(schema.options)
-    .where(eq(schema.options.accountId, account.id))
-    .all()
-    .map((o) => o.id);
-  const sameSet =
-    existing.length === optionIds.length && existing.every((id) => optionIds.includes(id));
-  if (!sameSet)
-    return c.json({ error: "optionIds must contain every option of this account exactly once" }, 400);
-
-  optionIds.forEach((id, index) => {
-    db.update(schema.options)
-      .set({ position: index })
-      .where(eq(schema.options.id, id))
-      .run();
-  });
-  return c.json({ ok: true });
-});
-
 api.patch("/accounts/:slug/options/:optionId", async (c) => {
   requireManager(c);
   const account = c.get("account");
-  const body = optionBodySchema
+  const body = itemOptionSchema
     .partial()
     .extend({ archived: z.boolean().optional() })
     .parse(await c.req.json());
@@ -502,20 +626,17 @@ api.patch("/accounts/:slug/options/:optionId", async (c) => {
     )
     .get();
   if (!option) return c.json({ error: "Option not found" }, 404);
+
+  // Validate the item's resulting active option set.
+  const updated = { ...option, ...body };
+  const siblings = activeOptionsOfItem(option.itemId).filter((o) => o.id !== option.id);
+  const resulting = updated.archived ? siblings : [...siblings, updated];
+  if (violatesOptionRule(resulting)) return c.json({ error: MULTI_OPTION_RULE }, 400);
+  if (resulting.length === 0 && updated.archived)
+    return c.json({ error: "An item needs at least one active option — archive the item instead" }, 409);
+
   db.update(schema.options).set(body).where(eq(schema.options.id, option.id)).run();
   return c.json({ ok: true });
-});
-
-api.get("/accounts/:slug/options", (c) => {
-  requireManager(c);
-  const account = c.get("account");
-  const all = db
-    .select()
-    .from(schema.options)
-    .where(eq(schema.options.accountId, account.id))
-    .orderBy(schema.options.position, schema.options.createdAt)
-    .all();
-  return c.json({ options: all });
 });
 
 // ---------------------------------------------------------------------------
@@ -529,6 +650,8 @@ api.post("/accounts/:slug/entries", async (c) => {
     .object({
       optionId: z.string(),
       action: z.enum(["increment", "decrement"]),
+      // Clients debounce rapid taps and submit them as one batch.
+      count: z.number().int().min(1).max(50).default(1),
       userId: z.string().optional(),
     })
     .parse(await c.req.json());
@@ -545,24 +668,33 @@ api.post("/accounts/:slug/entries", async (c) => {
     )
     .get();
   if (!option) return c.json({ error: "Option not found" }, 404);
-  if (option.archived && body.action === "increment")
+  const parentItem = db
+    .select()
+    .from(schema.items)
+    .where(eq(schema.items.id, option.itemId))
+    .get();
+  if ((option.archived || parentItem?.archived) && body.action === "increment")
     return c.json({ error: "That option has been archived" }, 409);
 
   const preBalance = balanceForUser(account.id, targetUserId).balanceCents;
 
   if (body.action === "increment") {
-    db.insert(schema.entries)
-      .values({
-        id: nanoid(),
-        accountId: account.id,
-        userId: targetUserId,
-        actorId: me.id,
-        kind: "consume",
-        optionId: option.id,
-        amountCents: option.priceCents,
-        createdAt: now(),
-      })
-      .run();
+    db.transaction(() => {
+      for (let i = 0; i < body.count; i++) {
+        db.insert(schema.entries)
+          .values({
+            id: nanoid(),
+            accountId: account.id,
+            userId: targetUserId,
+            actorId: me.id,
+            kind: "consume",
+            optionId: option.id,
+            amountCents: option.priceCents,
+            createdAt: now(),
+          })
+          .run();
+      }
+    });
     notifyIfCrossed(
       account.id,
       targetUserId,
@@ -570,21 +702,28 @@ api.post("/accounts/:slug/entries", async (c) => {
       balanceForUser(account.id, targetUserId).balanceCents
     );
   } else {
-    const consume = latestUndoableConsume(account.id, targetUserId, option.id);
-    if (!consume) return c.json({ error: "Nothing to undo for this option" }, 409);
-    db.insert(schema.entries)
-      .values({
-        id: nanoid(),
-        accountId: account.id,
-        userId: targetUserId,
-        actorId: me.id,
-        kind: "undo",
-        optionId: option.id,
-        amountCents: consume.amountCents,
-        reversesEntryId: consume.id,
-        createdAt: now(),
-      })
-      .run();
+    let undone = 0;
+    db.transaction(() => {
+      for (let i = 0; i < body.count; i++) {
+        const consume = latestUndoableConsume(account.id, targetUserId, option.id);
+        if (!consume) break;
+        db.insert(schema.entries)
+          .values({
+            id: nanoid(),
+            accountId: account.id,
+            userId: targetUserId,
+            actorId: me.id,
+            kind: "undo",
+            optionId: option.id,
+            amountCents: consume.amountCents,
+            reversesEntryId: consume.id,
+            createdAt: now(),
+          })
+          .run();
+        undone++;
+      }
+    });
+    if (undone === 0) return c.json({ error: "Nothing to undo for this option" }, 409);
   }
 
   return c.json({
@@ -854,16 +993,44 @@ api.get("/accounts/:slug/activity", (c) => {
   const lookupOption = (id: string | null) => {
     if (!id) return null;
     if (!optionNames.has(id)) {
-      const o = db.select().from(schema.options).where(eq(schema.options.id, id)).get();
-      optionNames.set(id, o?.name ?? "Unknown");
+      // Label = "Item — Option" (or just the item name for anonymous options)
+      const row = db.get<{ label: string }>(dsql`
+        SELECT i.name || CASE WHEN o.name IS NULL THEN '' ELSE ' — ' || o.name END AS label
+        FROM option o JOIN item i ON i.id = o.item_id
+        WHERE o.id = ${id}
+      `);
+      optionNames.set(id, row?.label ?? "Unknown");
     }
     return optionNames.get(id)!;
   };
 
+  // Collapse bursts (debounced batches land within a few seconds) into one
+  // feed line with a count.
+  const grouped: (typeof rows[number] & { count: number })[] = [];
+  for (const r of rows) {
+    const prev = grouped[grouped.length - 1];
+    if (
+      prev &&
+      prev.kind === r.kind &&
+      prev.userId === r.userId &&
+      prev.actorId === r.actorId &&
+      prev.optionId === r.optionId &&
+      prev.amountCents === r.amountCents &&
+      prev.note === r.note &&
+      Math.abs(prev.createdAt.getTime() - r.createdAt.getTime()) <= 5000 &&
+      (r.kind === "consume" || r.kind === "undo")
+    ) {
+      prev.count++;
+    } else {
+      grouped.push({ ...r, count: 1 });
+    }
+  }
+
   return c.json({
-    activity: rows.map((r) => ({
+    activity: grouped.map((r) => ({
       id: r.id,
       kind: r.kind,
+      count: r.count,
       amountCents: r.amountCents,
       note: r.note,
       createdAt: r.createdAt,
@@ -895,12 +1062,13 @@ api.get("/accounts/:slug/export.csv", (c) => {
     SELECT e.created_at AS createdAt, e.kind,
            u.name AS userName, u.email AS userEmail,
            a.name AS actorName,
-           o.name AS optionName,
+           i.name || CASE WHEN o.name IS NULL THEN '' ELSE ' — ' || o.name END AS optionName,
            e.amount_cents AS amountCents, e.note
     FROM entry e
     JOIN user u ON u.id = e.user_id
     JOIN user a ON a.id = e.actor_id
     LEFT JOIN option o ON o.id = e.option_id
+    LEFT JOIN item i ON i.id = o.item_id
     WHERE e.account_id = ${account.id}
     ORDER BY e.created_at ASC
   `);
