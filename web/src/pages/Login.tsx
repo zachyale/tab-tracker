@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useConfig } from "../App";
 import { authClient, signIn } from "../lib/auth";
-import { Button, Card, ErrorNote, Input } from "../components/ui";
+import { Button, Card, ErrorNote, Input } from "../components/fields";
 
 export default function Login() {
   const config = useConfig();

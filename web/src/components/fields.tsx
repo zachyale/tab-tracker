@@ -1,88 +1,96 @@
-import type {
-  ButtonHTMLAttributes,
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
-} from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
+import { Button as UiButton } from "@/components/ui/button";
+import { Card as UiCard } from "@/components/ui/card";
+import { Input as UiInput } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select as UiSelect,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+
+/**
+ * App-level wrappers over the shadcn/ui primitives: a padded Card, a Button
+ * with the app's variant names, and label-included form fields.
+ */
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-stone-200 bg-white p-4 shadow-sm ${className}`}>
-      {children}
-    </div>
-  );
+  // shadcn's Card base is a flex column; reset to plain block flow so
+  // call-site layout classes behave like a regular div.
+  return <UiCard className={cn("block flex-row gap-0 p-4", className)}>{children}</UiCard>;
 }
+
+const VARIANT_MAP = {
+  primary: "default",
+  secondary: "outline",
+  danger: "destructive",
+} as const;
 
 export function Button({
   variant = "primary",
-  className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger" }) {
-  const styles = {
-    primary: "bg-stone-900 text-amber-50 hover:bg-stone-700 disabled:bg-stone-400",
-    secondary:
-      "border border-stone-300 bg-white text-stone-900 hover:bg-stone-100 disabled:text-stone-400",
-    danger: "bg-red-700 text-white hover:bg-red-600 disabled:bg-stone-400",
-  }[variant];
-  return (
-    <button
-      {...props}
-      className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed ${styles} ${className}`}
-    />
-  );
+}: Omit<ComponentProps<typeof UiButton>, "variant"> & {
+  variant?: keyof typeof VARIANT_MAP;
+}) {
+  return <UiButton variant={VARIANT_MAP[variant]} {...props} />;
 }
 
 export function Input({
   label,
-  className = "",
   ...props
-}: InputHTMLAttributes<HTMLInputElement> & { label?: string }) {
-  const input = (
-    <input
-      {...props}
-      className={`w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-300/50 ${className}`}
-    />
-  );
-  if (!label) return input;
+}: ComponentProps<typeof UiInput> & { label?: string }) {
+  const id = useId();
+  if (!label) return <UiInput {...props} />;
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium text-stone-700">{label}</span>
-      {input}
-    </label>
+    <div className="space-y-1">
+      <Label htmlFor={props.id ?? id}>{label}</Label>
+      <UiInput id={props.id ?? id} {...props} />
+    </div>
   );
 }
 
 export function Select({
   label,
   options,
-  className = "",
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement> & { label?: string; options: string[] }) {
+  value,
+  onValueChange,
+}: {
+  label?: string;
+  options: string[];
+  value: string;
+  onValueChange: (value: string) => void;
+}) {
+  const id = useId();
   const select = (
-    <select
-      {...props}
-      className={`w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-300/50 ${className}`}
-    >
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
-    </select>
+    <UiSelect value={value} onValueChange={onValueChange}>
+      <SelectTrigger id={id} className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((o) => (
+          <SelectItem key={o} value={o}>
+            {o}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </UiSelect>
   );
   if (!label) return select;
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium text-stone-700">{label}</span>
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
       {select}
-    </label>
+    </div>
   );
 }
 
 export function ErrorNote({ children }: { children: ReactNode }) {
   if (!children) return null;
   return (
-    <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+    <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
       {children}
     </p>
   );
@@ -91,7 +99,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 export function Spinner() {
   return (
     <div className="flex justify-center py-10">
-      <div className="size-6 animate-spin rounded-full border-2 border-stone-300 border-t-stone-900" />
+      <div className="size-6 animate-spin rounded-full border-2 border-muted border-t-foreground" />
     </div>
   );
 }

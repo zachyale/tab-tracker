@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { authClient } from "../lib/auth";
-import { Button, Card, ErrorNote, Input } from "../components/ui";
+import { Button, Card, ErrorNote, Input } from "../components/fields";
 
 export function ForgotPassword() {
   const [email, setEmail] = useState("");

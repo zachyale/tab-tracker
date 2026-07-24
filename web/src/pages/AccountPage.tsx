@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { api, ApiError, type AccountPageData, type ActivityItem } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { balanceLabel, money, timeAgo } from "../lib/format";
-import { Card, ErrorNote, Spinner } from "../components/ui";
+import { Card, ErrorNote, Spinner } from "../components/fields";
 
 export default function AccountPage() {
   const { slug } = useParams<{ slug: string }>();
