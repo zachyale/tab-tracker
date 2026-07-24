@@ -2,7 +2,7 @@
 
 [![release](https://img.shields.io/github/v/release/zachyale/tab-tracker?sort=semver)](https://github.com/zachyale/tab-tracker/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzachyale%2Ftab-tracker%2Fbadges%2Fcoverage.json)](https://github.com/zachyale/tab-tracker/actions/workflows/ci.yml)
+[![coverage](https://codecov.io/gh/zachyale/tab-tracker/branch/main/graph/badge.svg)](https://codecov.io/gh/zachyale/tab-tracker)
 
 > **Note:** This is a personal project, open source for posterity. It comes with
 > no guarantee of support or stability.
