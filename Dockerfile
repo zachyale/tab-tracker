@@ -19,6 +19,7 @@ COPY package.json package-lock.json /app/
 COPY server/package.json ./
 RUN cd /app && npm ci --omit=dev -w server && npm cache clean --force
 COPY --from=build /app/server/dist ./dist
+COPY --from=build /app/server/drizzle ./drizzle
 COPY --from=build /app/web/dist /app/web/dist
 VOLUME /data
 EXPOSE 3000
