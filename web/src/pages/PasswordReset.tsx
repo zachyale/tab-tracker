@@ -24,7 +24,7 @@ export function ForgotPassword() {
       <h1 className="mb-4 text-center text-2xl font-bold">Reset password</h1>
       <Card>
         {sent ? (
-          <p className="text-sm text-stone-600">
+          <p className="text-sm text-muted-foreground">
             If an account exists for <strong>{email}</strong>, a reset link is on its way.
           </p>
         ) : (

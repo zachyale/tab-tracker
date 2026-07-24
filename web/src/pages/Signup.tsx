@@ -37,7 +37,7 @@ export default function Signup() {
       <div className="mx-auto mt-8 max-w-sm">
         <Card>
           <h1 className="mb-2 text-xl font-bold">Check your email</h1>
-          <p className="text-sm text-stone-600">
+          <p className="text-sm text-muted-foreground">
             We sent a verification link to <strong>{email}</strong>. Click it, then log in.
           </p>
         </Card>
@@ -81,7 +81,7 @@ export default function Signup() {
           </Button>
         </form>
       </Card>
-      <p className="mt-4 text-center text-sm text-stone-600">
+      <p className="mt-4 text-center text-sm text-muted-foreground">
         Already have a login?{" "}
         <Link to={`/login?next=${encodeURIComponent(next)}`} className="font-semibold underline">
           Log in
