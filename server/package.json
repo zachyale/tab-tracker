@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "db:generate": "drizzle-kit generate",
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@vitest/coverage-v8": "^3.1.0",
+    "drizzle-kit": "^0.31.0",
     "@types/node": "^22.15.0",
     "@types/nodemailer": "^6.4.17",
     "tsx": "^4.19.0",
