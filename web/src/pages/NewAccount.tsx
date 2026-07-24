@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useConfig } from "../App";
 import { api, ApiError } from "../lib/api";
-import { Button, Card, ErrorNote, Input, Select } from "../components/ui";
+import { Button, Card, ErrorNote, Input, Select } from "../components/fields";
 
 export function slugify(name: string): string {
   return name
@@ -87,7 +87,7 @@ export default function NewAccount() {
             label="Currency"
             options={config.currencies}
             value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
+            onValueChange={setCurrency}
           />
           <ErrorNote>{error}</ErrorNote>
           <Button type="submit" disabled={busy} className="w-full">

@@ -1,5 +1,8 @@
-import { useState } from "react";
-import { Button, Input } from "./ui";
+import { useId, useState } from "react";
+import { Button, Input } from "./fields";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 /**
  * Editor for notification trigger amounts: enable/disable plus an editable
@@ -21,6 +24,7 @@ export function TriggerEditor({
   const [triggers, setTriggers] = useState<number[]>(initialTriggers);
   const [newAmount, setNewAmount] = useState("");
   const [dirty, setDirty] = useState(false);
+  const enabledId = useId();
 
   function addTrigger() {
     const cents = Math.round(parseFloat(newAmount) * 100);
@@ -32,32 +36,29 @@ export function TriggerEditor({
 
   return (
     <div className="space-y-3">
-      <label className="flex items-center gap-2 text-sm font-medium">
-        <input
-          type="checkbox"
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id={enabledId}
           checked={enabled}
-          onChange={(e) => {
-            setEnabled(e.target.checked);
+          onCheckedChange={(checked) => {
+            setEnabled(checked === true);
             setDirty(true);
           }}
-          className="size-4 accent-stone-900"
         />
-        Notifications enabled
-      </label>
+        <Label htmlFor={enabledId}>Notifications enabled</Label>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         {triggers.length === 0 && (
-          <span className="text-sm text-stone-500">No trigger amounts.</span>
+          <span className="text-sm text-muted-foreground">No trigger amounts.</span>
         )}
         {triggers.map((t) => (
-          <span
-            key={t}
-            className="flex items-center gap-1 rounded-full bg-stone-100 px-3 py-1 text-sm font-medium"
-          >
+          <Badge key={t} variant="secondary" className="gap-1 px-3 py-1 text-sm">
             ${(t / 100).toFixed(2)}
             <button
+              type="button"
               aria-label={`Remove $${(t / 100).toFixed(2)} trigger`}
-              className="text-stone-400 hover:text-red-700"
+              className="text-muted-foreground hover:text-destructive"
               onClick={() => {
                 setTriggers((prev) => prev.filter((x) => x !== t));
                 setDirty(true);
@@ -65,7 +66,7 @@ export function TriggerEditor({
             >
               ×
             </button>
-          </span>
+          </Badge>
         ))}
         <div className="flex items-center gap-1">
           <div className="w-24">

@@ -9,7 +9,7 @@ import {
 } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { balanceLabel } from "../lib/format";
-import { Card, ErrorNote, Spinner } from "../components/ui";
+import { Card, ErrorNote, Spinner } from "../components/fields";
 import { TriggerEditor } from "../components/TriggerEditor";
 
 type DashboardData = { owed: AccountSummary[]; managed: ManagedSummary[] };
