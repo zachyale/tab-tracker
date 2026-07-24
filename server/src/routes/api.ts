@@ -288,7 +288,7 @@ api.get("/accounts/:slug", (c) => {
     .select()
     .from(schema.options)
     .where(and(eq(schema.options.accountId, account.id), eq(schema.options.archived, false)))
-    .orderBy(schema.options.createdAt)
+    .orderBy(schema.options.position, schema.options.createdAt)
     .all();
 
   const mine = user
@@ -440,10 +440,48 @@ api.post("/accounts/:slug/options", async (c) => {
   const account = c.get("account");
   const body = optionBodySchema.parse(await c.req.json());
   const id = nanoid();
+  const maxPos = db.get<{ max: number | null }>(
+    dsql`SELECT MAX(position) AS max FROM option WHERE account_id = ${account.id}`
+  );
   db.insert(schema.options)
-    .values({ id, accountId: account.id, ...body, createdAt: now() })
+    .values({
+      id,
+      accountId: account.id,
+      ...body,
+      position: (maxPos?.max ?? -1) + 1,
+      createdAt: now(),
+    })
     .run();
   return c.json({ id }, 201);
+});
+
+// Reorder options: the body lists ALL of the account's option ids in the
+// desired display order.
+api.put("/accounts/:slug/options/order", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const { optionIds } = z
+    .object({ optionIds: z.array(z.string()).min(1) })
+    .parse(await c.req.json());
+
+  const existing = db
+    .select({ id: schema.options.id })
+    .from(schema.options)
+    .where(eq(schema.options.accountId, account.id))
+    .all()
+    .map((o) => o.id);
+  const sameSet =
+    existing.length === optionIds.length && existing.every((id) => optionIds.includes(id));
+  if (!sameSet)
+    return c.json({ error: "optionIds must contain every option of this account exactly once" }, 400);
+
+  optionIds.forEach((id, index) => {
+    db.update(schema.options)
+      .set({ position: index })
+      .where(eq(schema.options.id, id))
+      .run();
+  });
+  return c.json({ ok: true });
 });
 
 api.patch("/accounts/:slug/options/:optionId", async (c) => {
@@ -475,7 +513,7 @@ api.get("/accounts/:slug/options", (c) => {
     .select()
     .from(schema.options)
     .where(eq(schema.options.accountId, account.id))
-    .orderBy(schema.options.createdAt)
+    .orderBy(schema.options.position, schema.options.createdAt)
     .all();
   return c.json({ options: all });
 });
