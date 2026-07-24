@@ -1,16 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import {
-  api,
-  ApiError,
-  type AccountSummary,
-  type ManagedSummary,
-  type NotificationSettings,
-} from "../lib/api";
+import { api, type AccountSummary, type ManagedSummary } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { balanceLabel } from "../lib/format";
-import { Card, ErrorNote, Spinner } from "../components/fields";
-import { TriggerEditor } from "../components/TriggerEditor";
+import { Card, Spinner } from "../components/fields";
 
 type DashboardData = { owed: AccountSummary[]; managed: ManagedSummary[] };
 
@@ -95,77 +88,6 @@ export default function Dashboard() {
           </div>
         )}
       </section>
-
-      <NotificationPrefs />
     </div>
-  );
-}
-
-function NotificationPrefs() {
-  const [settings, setSettings] = useState<NotificationSettings | null>(null);
-  const [open, setOpen] = useState(false);
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    api.get<NotificationSettings>("/api/notification-settings").then(setSettings).catch(() => {});
-  }, []);
-
-  if (!settings) return null;
-
-  async function save(enabled: boolean, triggersCents: number[] | null) {
-    setError("");
-    setSaved(false);
-    try {
-      const res = await api.put<{ mine: NotificationSettings["mine"] }>(
-        "/api/notification-settings",
-        { enabled, triggersCents }
-      );
-      setSettings((s) => (s ? { ...s, mine: res.mine } : s));
-      setSaved(true);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to save");
-    }
-  }
-
-  const usingDefaults = settings.mine.triggersCents === null;
-
-  return (
-    <section>
-      <button onClick={() => setOpen(!open)} className="text-sm text-muted-foreground underline">
-        {open ? "Hide notification settings" : "Notification settings"}
-      </button>
-      {open && (
-        <Card className="mt-2">
-          <p className="mb-3 text-sm text-muted-foreground">
-            Get an email when a tab of yours crosses a trigger amount.
-            {usingDefaults && " You're using the instance defaults."}
-            {!settings.smtpEnabled && (
-              <span className="mt-1 block font-medium text-amber-700">
-                ⚠ This instance has no email (SMTP) configured, so notifications won't send.
-              </span>
-            )}
-          </p>
-          <ErrorNote>{error}</ErrorNote>
-          <TriggerEditor
-            key={usingDefaults ? "defaults" : "custom"}
-            enabled={settings.mine.enabled}
-            triggersCents={settings.mine.triggersCents ?? settings.instance.triggersCents}
-            onSave={(enabled, triggers) => void save(enabled, triggers)}
-          />
-          <div className="mt-2 flex items-center gap-3">
-            {!usingDefaults && (
-              <button
-                className="text-xs text-muted-foreground underline"
-                onClick={() => void save(settings.mine.enabled, null)}
-              >
-                Reset to instance defaults
-              </button>
-            )}
-            {saved && <span className="text-xs text-emerald-600 dark:text-emerald-400">Saved ✓</span>}
-          </div>
-        </Card>
-      )}
-    </section>
   );
 }

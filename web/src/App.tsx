@@ -22,6 +22,7 @@ import AccountPage from "./pages/AccountPage";
 import ManagePage from "./pages/ManagePage";
 import AdminPage from "./pages/AdminPage";
 import ProfilePage from "./pages/ProfilePage";
+import SettingsPage from "./pages/SettingsPage";
 import { ForgotPassword, ResetPassword } from "./pages/PasswordReset";
 
 const DEFAULT_CONFIG: InstanceConfig = {
@@ -91,9 +92,10 @@ function UserMenu() {
         <ChevronDown className="size-3.5 opacity-70" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">
-        <DropdownMenuItem onClick={() => navigate("/profile")}>Profile</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate("/profile")}>Edit profile</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate("/settings")}>Settings</DropdownMenuItem>
         {isAdmin && (
-          <DropdownMenuItem onClick={() => navigate("/admin")}>Instance admin</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => navigate("/admin")}>Admin settings</DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Theme</DropdownMenuLabel>
@@ -115,7 +117,7 @@ function Header() {
   const config = useConfig();
 
   return (
-    <header className="bg-stone-950 text-amber-50">
+    <header className="bg-stone-950 text-amber-50 dark:border-b dark:border-border dark:bg-card">
       <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
         <Link to="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
           <span aria-hidden>🍺</span>
@@ -162,6 +164,7 @@ export default function App() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/accounts/new" element={<NewAccount />} />
               <Route path="/accounts/:slug" element={<AccountPage />} />
