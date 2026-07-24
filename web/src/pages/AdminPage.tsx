@@ -3,8 +3,10 @@ import { useNavigate } from "react-router";
 import { api, ApiError, type NotificationSettings } from "../lib/api";
 import { authClient } from "../lib/auth";
 import { money, timeAgo } from "../lib/format";
-import { Button, Card, ErrorNote, Spinner } from "../components/ui";
+import { Button, Card, ErrorNote, Spinner } from "../components/fields";
 import { TriggerEditor } from "../components/TriggerEditor";
+import { PromptDialog } from "../components/dialogs";
+import { Badge } from "@/components/ui/badge";
 
 type AdminUser = {
   id: string;
@@ -19,7 +21,9 @@ export default function AdminPage() {
   const navigate = useNavigate();
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
+  const [passwordTarget, setPasswordTarget] = useState<AdminUser | null>(null);
 
   const load = useCallback(async () => {
     const me = await api.get<{ user: { role: string } | null }>("/api/me");
@@ -49,15 +53,12 @@ export default function AdminPage() {
     else void load();
   }
 
-  async function setPassword(u: AdminUser) {
-    const newPassword = window.prompt(
-      `Set a new password for ${u.name} (${u.email}). Share it with them securely; they can change it after logging in.`
-    );
-    if (!newPassword) return;
+  async function setPassword(u: AdminUser, newPassword: string) {
     setError("");
+    setNotice("");
     const res = await authClient.admin.setUserPassword({ userId: u.id, newPassword });
     if (res.error) setError(res.error.message ?? "Failed");
-    else window.alert("Password updated.");
+    else setNotice(`Password updated for ${u.name}.`);
   }
 
   async function saveInstanceSettings(enabled: boolean, triggersCents: number[]) {
@@ -79,6 +80,11 @@ export default function AdminPage() {
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Instance admin</h1>
       <ErrorNote>{error}</ErrorNote>
+      {notice && (
+        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {notice}
+        </p>
+      )}
 
       <Card className="divide-y divide-stone-100 p-0">
         {users.map((u) => (
@@ -87,14 +93,14 @@ export default function AdminPage() {
               <div className="font-semibold">
                 {u.name}
                 {u.role === "admin" && (
-                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                  <Badge variant="secondary" className="ml-2">
                     admin
-                  </span>
+                  </Badge>
                 )}
                 {u.banned && (
-                  <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                  <Badge variant="destructive" className="ml-2">
                     deactivated
-                  </span>
+                  </Badge>
                 )}
               </div>
               <div className="text-xs text-stone-500">
@@ -102,7 +108,7 @@ export default function AdminPage() {
               </div>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => void setPassword(u)}>
+              <Button variant="secondary" onClick={() => setPasswordTarget(u)}>
                 Set password
               </Button>
               <Button
@@ -115,6 +121,20 @@ export default function AdminPage() {
           </div>
         ))}
       </Card>
+
+      <PromptDialog
+        open={passwordTarget !== null}
+        onOpenChange={(o) => !o && setPasswordTarget(null)}
+        title={passwordTarget ? `Set password for ${passwordTarget.name}` : ""}
+        description="Share the new password with them securely; they can change it after logging in."
+        fields={[
+          { name: "password", label: "New password", type: "password", required: true },
+        ]}
+        submitLabel="Set password"
+        onSubmit={(values) =>
+          passwordTarget && void setPassword(passwordTarget, values.password)
+        }
+      />
 
       {settings && (
         <Card>

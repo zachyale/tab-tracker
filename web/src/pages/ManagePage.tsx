@@ -11,7 +11,9 @@ import {
 } from "../lib/api";
 import { useConfig } from "../App";
 import { balanceLabel, money, timeAgo } from "../lib/format";
-import { Button, Card, ErrorNote, Input, Select, Spinner } from "../components/ui";
+import { Button, Card, ErrorNote, Input, Select, Spinner } from "../components/fields";
+import { ConfirmDialog, PromptDialog } from "../components/dialogs";
+import { Badge } from "@/components/ui/badge";
 
 type Tab = "members" | "activity" | "options" | "settings";
 
@@ -79,9 +81,21 @@ export default function ManagePage() {
 
 // ---------------------------------------------------------------------------
 
+type MemberDialog =
+  | { kind: "edit"; member: Member }
+  | { kind: "link"; member: Member }
+  | { kind: "remove"; member: Member }
+  | {
+      kind: "overpay";
+      payment: { userId: string; amountCents: number; note: string };
+      balanceCents: number;
+    }
+  | null;
+
 function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<MemberDialog>(null);
   const [error, setError] = useState("");
   const currency = data.account.currency;
 
@@ -113,19 +127,12 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
     }
   }
 
-  async function editGhost(m: Member) {
-    const name = window.prompt("Ghost member name", m.name);
-    if (name === null) return;
-    const email = window.prompt(
-      "Email they'll sign up with (blank for none). Their tab transfers automatically when that email registers.",
-      m.claimEmail ?? ""
-    );
-    if (email === null) return;
+  async function editGhost(m: Member, values: Record<string, string>) {
     setError("");
     try {
       await api.patch(`/api/accounts/${slug}/ghosts/${m.id}`, {
-        name,
-        email: email.trim() || null,
+        name: values.name,
+        email: values.email.trim() || null,
       });
       load();
     } catch (e) {
@@ -133,11 +140,7 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
     }
   }
 
-  async function linkGhost(m: Member) {
-    const email = window.prompt(
-      `Link "${m.name}" to an existing user. Their tab (balance and history) will transfer to that user's account.\n\nRegistered user's email:`
-    );
-    if (!email) return;
+  async function linkGhost(m: Member, email: string) {
     setError("");
     try {
       await api.post(`/api/accounts/${slug}/ghosts/${m.id}/link`, { email: email.trim() });
@@ -148,7 +151,6 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
   }
 
   async function removeGhost(m: Member) {
-    if (!window.confirm(`Remove ghost member "${m.name}" and their entire tab history?`)) return;
     setError("");
     try {
       await api.del(`/api/accounts/${slug}/ghosts/${m.id}`);
@@ -175,24 +177,24 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
       load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.data.requiresConfirmation) {
-        const balance = money((e.data.balanceCents as number) ?? 0, currency);
-        if (
-          window.confirm(
-            `That's more than their current balance (${balance}). Record it anyway and leave them in credit?`
-          )
-        ) {
-          await api.post(`/api/accounts/${slug}/payments`, {
-            userId,
-            amountCents,
-            note,
-            allowNegative: true,
-          });
-          load();
-          return;
-        }
+        setDialog({
+          kind: "overpay",
+          payment: { userId, amountCents, note },
+          balanceCents: (e.data.balanceCents as number) ?? 0,
+        });
       } else {
         setError(e instanceof ApiError ? e.message : "Failed");
       }
+    }
+  }
+
+  async function confirmOverpay(payment: { userId: string; amountCents: number; note: string }) {
+    setError("");
+    try {
+      await api.post(`/api/accounts/${slug}/payments`, { ...payment, allowNegative: true });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
     }
   }
 
@@ -216,9 +218,9 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
               <div className="font-semibold">
                 {m.name}
                 {m.isGhost && (
-                  <span className="ml-2 rounded-full bg-stone-200 px-2 py-0.5 text-xs font-medium text-stone-600">
+                  <Badge variant="secondary" className="ml-2">
                     👻 ghost
-                  </span>
+                  </Badge>
                 )}
               </div>
               <div className="text-xs text-stone-500">
@@ -272,13 +274,22 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
               />
               {m.isGhost && (
                 <div className="flex gap-3 text-xs">
-                  <button className="text-stone-500 underline" onClick={() => void editGhost(m)}>
+                  <button
+                    className="text-muted-foreground underline"
+                    onClick={() => setDialog({ kind: "edit", member: m })}
+                  >
                     Edit ghost
                   </button>
-                  <button className="text-stone-500 underline" onClick={() => void linkGhost(m)}>
+                  <button
+                    className="text-muted-foreground underline"
+                    onClick={() => setDialog({ kind: "link", member: m })}
+                  >
                     Link to user
                   </button>
-                  <button className="text-red-700 underline" onClick={() => void removeGhost(m)}>
+                  <button
+                    className="text-destructive underline"
+                    onClick={() => setDialog({ kind: "remove", member: m })}
+                  >
                     Remove ghost
                   </button>
                 </div>
@@ -288,6 +299,72 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
         </Card>
       ))}
       <AddGhostForm onAdd={(name, email) => void addGhost(name, email)} />
+
+      <PromptDialog
+        open={dialog?.kind === "edit"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title="Edit ghost member"
+        description="If you set an email, their tab transfers automatically when that email registers."
+        fields={
+          dialog?.kind === "edit"
+            ? [
+                { name: "name", label: "Name", defaultValue: dialog.member.name, required: true },
+                {
+                  name: "email",
+                  label: "Email they'll sign up with (optional)",
+                  type: "email",
+                  defaultValue: dialog.member.claimEmail ?? "",
+                },
+              ]
+            : []
+        }
+        onSubmit={(values) => dialog?.kind === "edit" && void editGhost(dialog.member, values)}
+      />
+      <PromptDialog
+        open={dialog?.kind === "link"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={dialog?.kind === "link" ? `Link "${dialog.member.name}" to a user` : ""}
+        description="Their tab — balance and full history — will transfer to the registered user's account, and the ghost will be removed."
+        fields={[
+          {
+            name: "email",
+            label: "Registered user's email",
+            type: "email",
+            required: true,
+            placeholder: "friend@example.com",
+          },
+        ]}
+        submitLabel="Link"
+        onSubmit={(values) => dialog?.kind === "link" && void linkGhost(dialog.member, values.email)}
+      />
+      <ConfirmDialog
+        open={dialog?.kind === "remove"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title="Remove ghost member?"
+        description={
+          dialog?.kind === "remove"
+            ? `This deletes "${dialog.member.name}" and their entire tab history. This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => dialog?.kind === "remove" && void removeGhost(dialog.member)}
+      />
+      <ConfirmDialog
+        open={dialog?.kind === "overpay"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title="Record payment above balance?"
+        description={
+          dialog?.kind === "overpay"
+            ? `This payment is more than their current balance (${money(
+                dialog.balanceCents,
+                currency
+              )}). Recording it will leave them in credit.`
+            : ""
+        }
+        confirmLabel="Record anyway"
+        onConfirm={() => dialog?.kind === "overpay" && void confirmOverpay(dialog.payment)}
+      />
     </div>
   );
 }
@@ -468,6 +545,7 @@ function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
+  const [priceDialog, setPriceDialog] = useState<Option | null>(null);
 
   const load = useCallback(() => {
     api
@@ -553,19 +631,7 @@ function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
             </div>
           </div>
           <div className="flex shrink-0 gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                const raw = window.prompt(
-                  `New price for "${o.name}" in ${currency} (blank for no price). Existing tabs keep their recorded prices.`,
-                  o.priceCents != null ? (o.priceCents / 100).toFixed(2) : ""
-                );
-                if (raw === null) return;
-                const priceCents = raw.trim() === "" ? null : Math.round(parseFloat(raw) * 100);
-                if (priceCents !== null && !Number.isFinite(priceCents)) return;
-                void update(o.id, { priceCents });
-              }}
-            >
+            <Button variant="secondary" onClick={() => setPriceDialog(o)}>
               Price
             </Button>
             <Button variant="secondary" onClick={() => void update(o.id, { archived: !o.archived })}>
@@ -574,6 +640,36 @@ function OptionsTab({ slug, currency }: { slug: string; currency: string }) {
           </div>
         </Card>
       ))}
+
+      <PromptDialog
+        open={priceDialog !== null}
+        onOpenChange={(o) => !o && setPriceDialog(null)}
+        title={priceDialog ? `Set price for "${priceDialog.name}"` : ""}
+        description="Leave blank for no price. Existing tabs keep the prices recorded at the time of each entry."
+        fields={
+          priceDialog
+            ? [
+                {
+                  name: "price",
+                  label: `Price (${currency})`,
+                  type: "number",
+                  placeholder: "none",
+                  defaultValue:
+                    priceDialog.priceCents != null
+                      ? (priceDialog.priceCents / 100).toFixed(2)
+                      : "",
+                },
+              ]
+            : []
+        }
+        onSubmit={(values) => {
+          if (!priceDialog) return;
+          const raw = values.price.trim();
+          const priceCents = raw === "" ? null : Math.round(parseFloat(raw) * 100);
+          if (priceCents !== null && !Number.isFinite(priceCents)) return;
+          void update(priceDialog.id, { priceCents });
+        }}
+      />
     </div>
   );
 }
@@ -603,6 +699,7 @@ function SettingsTab({
     managers: { id: string; name: string; email: string }[];
   } | null>(null);
   const [managerEmail, setManagerEmail] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const publicUrl = `${window.location.origin}/accounts/${data.account.slug}`;
 
@@ -650,12 +747,6 @@ function SettingsTab({
   }
 
   async function removeAccount() {
-    if (
-      !window.confirm(
-        `Delete "${data.account.name}" and its entire ledger? This cannot be undone.`
-      )
-    )
-      return;
     await api.del(`/api/accounts/${slug}`);
     navigate("/");
   }
@@ -687,7 +778,7 @@ function SettingsTab({
             label="Currency"
             options={config.currencies}
             value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
+            onValueChange={setCurrency}
           />
           <div className="flex items-center gap-3">
             <Button type="submit">Save</Button>
@@ -763,11 +854,20 @@ function SettingsTab({
       </Card>
 
       {data.isOwner && (
-        <Card className="border-red-200">
-          <h3 className="mb-2 font-bold text-red-800">Danger zone</h3>
-          <Button variant="danger" onClick={() => void removeAccount()}>
+        <Card className="border-destructive/30">
+          <h3 className="mb-2 font-bold text-destructive">Danger zone</h3>
+          <Button variant="danger" onClick={() => setConfirmDelete(true)}>
             Delete account
           </Button>
+          <ConfirmDialog
+            open={confirmDelete}
+            onOpenChange={setConfirmDelete}
+            title={`Delete "${data.account.name}"?`}
+            description="This deletes the account and its entire ledger — every tab, entry, and payment. This cannot be undone."
+            confirmLabel="Delete account"
+            destructive
+            onConfirm={() => void removeAccount()}
+          />
         </Card>
       )}
     </div>
