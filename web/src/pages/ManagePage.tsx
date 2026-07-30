@@ -34,6 +34,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -75,13 +82,14 @@ export default function ManagePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{data.account.name}</h1>
-          <Link to={`/accounts/${slug}`} className="text-sm text-muted-foreground underline">
-            View public page
-          </Link>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">{data.account.name}</h1>
+        <Link
+          to={`/accounts/${slug}`}
+          className="shrink-0 rounded-xl border border-input bg-card px-3 py-2 text-sm font-semibold hover:bg-muted"
+        >
+          View public page
+        </Link>
       </div>
 
       <div className="flex gap-1 overflow-x-auto rounded-xl bg-muted p-1">
@@ -700,8 +708,11 @@ function MergeDialog({
 
 // ---------------------------------------------------------------------------
 
+const ACTIVITY_PAGE_SIZE = 15;
+
 function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
   const [items, setItems] = useState<ActivityItem[] | null>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     api
@@ -711,32 +722,102 @@ function ActivityTab({ slug, currency }: { slug: string; currency: string }) {
   }, [slug]);
 
   if (!items) return <Spinner />;
+  if (items.length === 0)
+    return <Card className="text-sm text-muted-foreground">No activity yet.</Card>;
+
+  const pageCount = Math.max(1, Math.ceil(items.length / ACTIVITY_PAGE_SIZE));
+  const current = Math.min(page, pageCount);
+  const rows = items.slice((current - 1) * ACTIVITY_PAGE_SIZE, current * ACTIVITY_PAGE_SIZE);
+
+  function describe(h: ActivityItem): string {
+    if (h.kind === "payment") return "Payment";
+    if (h.kind === "charge") return "Charge";
+    const label = h.optionName ?? "an item";
+    return `${h.kind === "undo" ? "Removed " : ""}${label}${h.count > 1 ? ` ×${h.count}` : ""}`;
+  }
 
   return (
-    <Card className="divide-y divide-border p-0">
-      {items.length === 0 && <p className="p-3 text-sm text-muted-foreground">No activity yet.</p>}
-      {items.map((h) => (
-        <div key={h.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-          <span className="min-w-0">
-            <strong>{h.userName}</strong>{" "}
-            {h.kind === "payment"
-              ? `paid ${money(h.amountCents ?? 0, currency)}`
-              : h.kind === "charge"
-                ? `was charged ${money(h.amountCents ?? 0, currency)}`
-                : h.kind === "undo"
-                  ? `removed ${h.optionName ?? "an item"}${h.count > 1 ? ` ×${h.count}` : ""}`
-                  : `had ${h.optionName ?? "an item"}${h.count > 1 ? ` ×${h.count}` : ""}${
-                      h.amountCents != null
-                        ? ` (${money(h.amountCents * h.count, currency)})`
-                        : ""
-                    }`}
-            {h.byManager && <span className="ml-1 text-xs text-muted-foreground">by {h.actorName}</span>}
-            {h.note && <span className="ml-1 text-xs text-muted-foreground">({h.note})</span>}
+    <div className="space-y-3">
+      <Card className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Member</TableHead>
+              <TableHead>Entry</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+              <TableHead className="text-right">When</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((h) => (
+              <TableRow key={h.id}>
+                <TableCell className="font-medium">{h.userName}</TableCell>
+                <TableCell>
+                  {describe(h)}
+                  {h.byManager && (
+                    <span className="ml-1 text-xs text-muted-foreground">by {h.actorName}</span>
+                  )}
+                  {h.note && (
+                    <span className="ml-1 text-xs text-muted-foreground">({h.note})</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {h.amountCents == null
+                    ? "—"
+                    : `${h.kind === "payment" || h.kind === "undo" ? "−" : ""}${money(
+                        h.amountCents * h.count,
+                        currency
+                      )}`}
+                </TableCell>
+                <TableCell className="text-right text-xs text-muted-foreground">
+                  {timeAgo(h.createdAt)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
+            {(current - 1) * ACTIVITY_PAGE_SIZE + 1}–
+            {Math.min(current * ACTIVITY_PAGE_SIZE, items.length)} of {items.length}
           </span>
-          <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(h.createdAt)}</span>
+          <Pagination className="mx-0 w-auto justify-end">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  aria-disabled={current === 1}
+                  className={current === 1 ? "pointer-events-none opacity-40" : ""}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setPage(current - 1);
+                  }}
+                />
+              </PaginationItem>
+              <PaginationItem>
+                <span className="px-2 text-sm text-muted-foreground">
+                  Page {current} of {pageCount}
+                </span>
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  aria-disabled={current === pageCount}
+                  className={current === pageCount ? "pointer-events-none opacity-40" : ""}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setPage(current + 1);
+                  }}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
         </div>
-      ))}
-    </Card>
+      )}
+    </div>
   );
 }
 

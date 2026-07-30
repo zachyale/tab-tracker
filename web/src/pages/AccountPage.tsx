@@ -4,6 +4,20 @@ import { api, ApiError, type AccountPageData, type ActivityItem } from "../lib/a
 import { useSession } from "../lib/auth";
 import { balanceLabel, money, timeAgo } from "../lib/format";
 import { Card, ErrorNote, Spinner } from "../components/fields";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 // Rapid taps are applied optimistically and flushed as one batch after this
 // long, so four entries land as one request (and one ledger transaction).
@@ -115,11 +129,7 @@ export default function AccountPage() {
     timerRef.current = setTimeout(() => void flush(), FLUSH_DELAY_MS);
   }
 
-  async function toggleHistory() {
-    if (history) {
-      setHistory(null);
-      return;
-    }
+  async function loadHistory() {
     const res = await api.get<{ activity: ActivityItem[] }>(
       `/api/accounts/${slug}/activity?mine=1`
     );
@@ -264,36 +274,62 @@ export default function AccountPage() {
       </div>
 
       {loggedIn && mine && (
-        <div className="pt-2">
-          <button onClick={() => void toggleHistory()} className="text-sm text-muted-foreground underline">
-            {history ? "Hide my history" : "Show my history"}
-          </button>
-          {history && (
-            <Card className="mt-2 divide-y divide-border p-0">
-              {history.length === 0 && (
-                <p className="p-3 text-sm text-muted-foreground">No activity yet.</p>
+        <Accordion type="single" collapsible>
+          <AccordionItem value="activity" className="rounded-2xl border bg-card px-4">
+            <AccordionTrigger onClick={() => void loadHistory()}>My activity</AccordionTrigger>
+            <AccordionContent className="px-0">
+              {!history ? (
+                <Spinner />
+              ) : history.length === 0 ? (
+                <p className="pb-3 text-sm text-muted-foreground">Nothing on your tab yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Entry</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead className="text-right">When</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.map((h) => (
+                      <TableRow key={h.id}>
+                        <TableCell>
+                          {h.kind === "payment"
+                            ? "Payment"
+                            : h.kind === "charge"
+                              ? "Charge"
+                              : `${h.kind === "undo" ? "Removed " : ""}${h.optionName ?? ""}${
+                                  h.count > 1 ? ` ×${h.count}` : ""
+                                }`.trim()}
+                          {h.byManager && (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              by {h.actorName}
+                            </span>
+                          )}
+                          {h.note && (
+                            <span className="ml-1 text-xs text-muted-foreground">({h.note})</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {h.amountCents == null
+                            ? "—"
+                            : `${h.kind === "payment" || h.kind === "undo" ? "−" : ""}${money(
+                                h.amountCents * h.count,
+                                account.currency
+                              )}`}
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-muted-foreground">
+                          {timeAgo(h.createdAt)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
-              {history.map((h) => (
-                <div key={h.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                  <span>
-                    {h.kind === "payment"
-                      ? `Paid ${money(h.amountCents ?? 0, account.currency)}`
-                      : h.kind === "charge"
-                        ? `Charged ${money(h.amountCents ?? 0, account.currency)}`
-                        : `${h.kind === "undo" ? "Removed" : ""} ${h.optionName ?? ""}${
-                            h.count > 1 ? ` ×${h.count}` : ""
-                          }`.trim()}
-                    {h.byManager && (
-                      <span className="ml-1 text-xs text-muted-foreground">by {h.actorName}</span>
-                    )}
-                    {h.note && <span className="ml-1 text-xs text-muted-foreground">({h.note})</span>}
-                  </span>
-                  <span className="text-xs text-muted-foreground">{timeAgo(h.createdAt)}</span>
-                </div>
-              ))}
-            </Card>
-          )}
-        </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       )}
 
     </div>
