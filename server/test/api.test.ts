@@ -376,43 +376,192 @@ describe("payments & charges", () => {
     aliceId = (await get("/api/me", alice)).json.user.id;
   });
 
+  async function balanceOf(userId: string): Promise<number> {
+    const members = (await get("/api/accounts/home/members", zach)).json.members;
+    return members.find((m: Json) => m.id === userId).balanceCents;
+  }
+
   it("rejects overpayment without confirmation, then accepts with it", async () => {
     const over = await post(
       "/api/accounts/home/payments",
-      { userId: aliceId, amountCents: 100000 },
+      { userIds: [aliceId], amountCents: 100000 },
       zach
     );
     expect(over.status).toBe(409);
     expect(over.json.requiresConfirmation).toBe(true);
+    expect(over.json.overpaidUserIds).toEqual([aliceId]);
 
     const confirmed = await post(
       "/api/accounts/home/payments",
-      { userId: aliceId, amountCents: 800, allowNegative: true },
+      { userIds: [aliceId], amountCents: 800, allowNegative: true },
       zach
     );
     expect(confirmed.status).toBe(200);
-    expect(confirmed.json.balanceCents).toBe(-100); // $7.00 owed − $8.00 paid
+    expect(await balanceOf(aliceId)).toBe(-100); // $7.00 owed − $8.00 paid
   });
 
   it("records charges with notes", async () => {
-    const { status, json } = await post(
+    const { status } = await post(
       "/api/accounts/home/charges",
-      { userId: aliceId, amountCents: 1050, note: "old paper tab" },
+      { userIds: [aliceId], amountCents: 1050, note: "old paper tab" },
       zach
     );
     expect(status).toBe(200);
-    expect(json.balanceCents).toBe(950); // −$1.00 + $10.50
+    expect(await balanceOf(aliceId)).toBe(950); // −$1.00 + $10.50
+  });
+
+  it("applies a charge to several members at once", async () => {
+    const g1 = (await post("/api/accounts/home/ghosts", { name: "Split A" }, zach)).json.id;
+    const g2 = (await post("/api/accounts/home/ghosts", { name: "Split B" }, zach)).json.id;
+    const { status, json } = await post(
+      "/api/accounts/home/charges",
+      { userIds: [g1, g2], amountCents: 1500, note: "supply deposit split" },
+      zach
+    );
+    expect(status).toBe(200);
+    expect(json.applied).toBe(2);
+    expect(await balanceOf(g1)).toBe(1500);
+    expect(await balanceOf(g2)).toBe(1500);
+
+    // settle both in one call: payment == each current balance
+    const settle = await post("/api/accounts/home/members/settle", { userIds: [g1, g2] }, zach);
+    expect(settle.json).toEqual({ settled: 2, skipped: 0 });
+    expect(await balanceOf(g1)).toBe(0);
+    expect(await balanceOf(g2)).toBe(0);
+
+    // settling a zero balance is a no-op, not an error
+    const again = await post("/api/accounts/home/members/settle", { userIds: [g1] }, zach);
+    expect(again.json).toEqual({ settled: 0, skipped: 1 });
+
+    await post("/api/accounts/home/ghosts/delete", { userIds: [g1, g2] }, zach);
+  });
+
+  it("rejects bulk actions naming a non-member", async () => {
+    const outsider = (await get("/api/me", zach)).json.user.id;
+    await post("/api/accounts", { ...validAccount(), name: "Other", slug: "other" }, zach);
+    const { status } = await post(
+      "/api/accounts/other/charges",
+      { userIds: [outsider], amountCents: 100 },
+      zach
+    );
+    expect(status).toBe(400);
+    await del("/api/accounts/other", zach);
   });
 
   it("only managers can record payments or charges", async () => {
     expect(
-      (await post("/api/accounts/home/payments", { userId: aliceId, amountCents: 1 }, alice))
+      (await post("/api/accounts/home/payments", { userIds: [aliceId], amountCents: 1 }, alice))
         .status
     ).toBe(403);
     expect(
-      (await post("/api/accounts/home/charges", { userId: aliceId, amountCents: 1 }, alice))
+      (await post("/api/accounts/home/charges", { userIds: [aliceId], amountCents: 1 }, alice))
         .status
     ).toBe(403);
+    expect(
+      (await post("/api/accounts/home/members/settle", { userIds: [aliceId] }, alice)).status
+    ).toBe(403);
+  });
+});
+
+describe("merging members", () => {
+  it("combines any number of members' balances into one", async () => {
+    const ids: string[] = [];
+    for (const [name, cents] of [
+      ["Merge Target", 500],
+      ["Merge A", 250],
+      ["Merge B", 125],
+    ] as const) {
+      const id = (await post("/api/accounts/home/ghosts", { name }, zach)).json.id;
+      await post("/api/accounts/home/charges", { userIds: [id], amountCents: cents }, zach);
+      ids.push(id);
+    }
+    const [target, a, b] = ids;
+
+    const merged = await post(
+      "/api/accounts/home/members/merge",
+      { targetUserId: target, sourceUserIds: [a, b] },
+      zach
+    );
+    expect(merged.status).toBe(200);
+    expect(merged.json.merged).toBe(2);
+    expect(merged.json.balanceCents).toBe(875); // 500 + 250 + 125
+
+    const members = (await get("/api/accounts/home/members", zach)).json.members;
+    expect(members.find((m: Json) => m.id === target).balanceCents).toBe(875);
+    // merged-away ghosts are gone
+    expect(members.find((m: Json) => m.id === a)).toBeUndefined();
+    expect(members.find((m: Json) => m.id === b)).toBeUndefined();
+
+    await post("/api/accounts/home/ghosts/delete", { userIds: [target] }, zach);
+  });
+
+  it("preserves merged history under the target", async () => {
+    const target = (await post("/api/accounts/home/ghosts", { name: "Hist Target" }, zach)).json.id;
+    const source = (await post("/api/accounts/home/ghosts", { name: "Hist Source" }, zach)).json.id;
+    await post(
+      "/api/accounts/home/charges",
+      { userIds: [source], amountCents: 300, note: "from the whiteboard" },
+      zach
+    );
+    await post(
+      "/api/accounts/home/members/merge",
+      { targetUserId: target, sourceUserIds: [source] },
+      zach
+    );
+    const activity = (await get("/api/accounts/home/activity", zach)).json.activity;
+    const moved = activity.find((a: Json) => a.note === "from the whiteboard");
+    expect(moved.userName).toBe("Hist Target");
+    await post("/api/accounts/home/ghosts/delete", { userIds: [target] }, zach);
+  });
+
+  it("merging a registered member leaves their account intact but tab empty", async () => {
+    const dan = await signup("Dan", "dan@example.com");
+    const danId = (await get("/api/me", dan)).json.user.id;
+    // Dan becomes a member by starting his own tab (a serving at $4).
+    await post("/api/accounts/home/entries", { optionId: brewId, action: "increment" }, dan);
+    const target = (await post("/api/accounts/home/ghosts", { name: "Absorber" }, zach)).json.id;
+
+    await post(
+      "/api/accounts/home/members/merge",
+      { targetUserId: target, sourceUserIds: [danId] },
+      zach
+    );
+
+    // Dan can still sign in and simply has no tab here anymore
+    expect((await get("/api/me", dan)).json.user).not.toBeNull();
+    expect((await get("/api/dashboard", dan)).json.owed).toHaveLength(0);
+    const members = (await get("/api/accounts/home/members", zach)).json.members;
+    expect(members.find((m: Json) => m.id === target).balanceCents).toBe(400);
+
+    await post("/api/accounts/home/ghosts/delete", { userIds: [target] }, zach);
+  });
+
+  it("rejects merging a member into itself and non-members", async () => {
+    const solo = (await post("/api/accounts/home/ghosts", { name: "Solo" }, zach)).json.id;
+    expect(
+      (await post(
+        "/api/accounts/home/members/merge",
+        { targetUserId: solo, sourceUserIds: [solo] },
+        zach
+      )).status
+    ).toBe(400);
+    expect(
+      (await post(
+        "/api/accounts/home/members/merge",
+        { targetUserId: solo, sourceUserIds: ["nope"] },
+        zach
+      )).status
+    ).toBe(400);
+    await post("/api/accounts/home/ghosts/delete", { userIds: [solo] }, zach);
+  });
+
+  it("only managers can merge", async () => {
+    const { status } = await post(
+      "/api/accounts/home/members/merge",
+      { targetUserId: "a", sourceUserIds: ["b"] },
+      alice
+    );
+    expect(status).toBe(403);
   });
 });
 
@@ -453,7 +602,7 @@ describe("ghost members", () => {
     );
     await post(
       "/api/accounts/home/charges",
-      { userId: daveGhostId, amountCents: 2000, note: "backfilled from whiteboard" },
+      { userIds: [daveGhostId], amountCents: 2000, note: "backfilled from whiteboard" },
       zach
     );
     const members = (await get("/api/accounts/home/members", zach)).json.members;
@@ -477,7 +626,7 @@ describe("ghost members", () => {
     const ghost = await post("/api/accounts/home/ghosts", { name: "Bobby?" }, zach);
     await post(
       "/api/accounts/home/charges",
-      { userId: ghost.json.id, amountCents: 500 },
+      { userIds: [ghost.json.id], amountCents: 500 },
       zach
     );
 
@@ -507,7 +656,7 @@ describe("ghost members", () => {
 
   it("deleting a ghost removes its ledger", async () => {
     const ghost = await post("/api/accounts/home/ghosts", { name: "Temp" }, zach);
-    await post("/api/accounts/home/charges", { userId: ghost.json.id, amountCents: 100 }, zach);
+    await post("/api/accounts/home/charges", { userIds: [ghost.json.id], amountCents: 100 }, zach);
     expect((await del(`/api/accounts/home/ghosts/${ghost.json.id}`, zach)).status).toBe(200);
     const members = (await get("/api/accounts/home/members", zach)).json.members;
     expect(members.find((m: Json) => m.id === ghost.json.id)).toBeUndefined();

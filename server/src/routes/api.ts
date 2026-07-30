@@ -732,74 +732,213 @@ api.post("/accounts/:slug/entries", async (c) => {
   });
 });
 
+// Payments, charges and settlements all accept a list of members so the
+// manager UI can apply one action to a whole selection atomically.
+const bulkMoneySchema = z.object({
+  userIds: z.array(z.string()).min(1, "Select at least one member").max(200),
+  amountCents: z.number().int().positive("Amount must be positive"),
+  note: z.string().trim().max(500).optional(),
+});
+
+/** Members of this account (has entries) plus its ghosts — the valid targets. */
+function memberIdsOf(accountId: string): Set<string> {
+  const withEntries = db
+    .all<{ userId: string }>(
+      dsql`SELECT DISTINCT user_id AS userId FROM entry WHERE account_id = ${accountId}`
+    )
+    .map((r) => r.userId);
+  const ghosts = db
+    .select({ id: schema.user.id })
+    .from(schema.user)
+    .where(and(eq(schema.user.isGhost, true), eq(schema.user.ghostAccountId, accountId)))
+    .all()
+    .map((g) => g.id);
+  return new Set([...withEntries, ...ghosts]);
+}
+
+function assertMembers(accountId: string, userIds: string[]): string | null {
+  const members = memberIdsOf(accountId);
+  const unknown = userIds.filter((id) => !members.has(id));
+  return unknown.length ? "One or more selected members don't belong to this account" : null;
+}
+
 api.post("/accounts/:slug/payments", async (c) => {
+  const me = requireManager(c);
+  const account = c.get("account");
+  const body = bulkMoneySchema
+    .extend({ allowNegative: z.boolean().optional() })
+    .parse(await c.req.json());
+
+  const invalid = assertMembers(account.id, body.userIds);
+  if (invalid) return c.json({ error: invalid }, 400);
+
+  if (!body.allowNegative) {
+    const overpaid = body.userIds.filter(
+      (id) => body.amountCents > balanceForUser(account.id, id).balanceCents
+    );
+    if (overpaid.length > 0) {
+      return c.json(
+        {
+          error:
+            overpaid.length === body.userIds.length
+              ? "Payment exceeds the current balance; this would leave them in credit"
+              : `Payment exceeds the balance of ${overpaid.length} selected member(s); they would be left in credit`,
+          balanceCents: balanceForUser(account.id, overpaid[0]!).balanceCents,
+          overpaidUserIds: overpaid,
+          requiresConfirmation: true,
+        },
+        409
+      );
+    }
+  }
+
+  db.transaction(() => {
+    for (const userId of body.userIds) {
+      db.insert(schema.entries)
+        .values({
+          id: nanoid(),
+          accountId: account.id,
+          userId,
+          actorId: me.id,
+          kind: "payment",
+          amountCents: body.amountCents,
+          note: body.note,
+          createdAt: now(),
+        })
+        .run();
+    }
+  });
+
+  return c.json({ applied: body.userIds.length });
+});
+
+// Settle up: record a payment equal to each member's current balance.
+api.post("/accounts/:slug/members/settle", async (c) => {
   const me = requireManager(c);
   const account = c.get("account");
   const body = z
     .object({
-      userId: z.string(),
-      amountCents: z.number().int().positive("Payment must be a positive amount"),
+      userIds: z.array(z.string()).min(1).max(200),
       note: z.string().trim().max(500).optional(),
-      allowNegative: z.boolean().optional(),
     })
     .parse(await c.req.json());
 
-  const current = balanceForUser(account.id, body.userId);
-  if (body.amountCents > current.balanceCents && !body.allowNegative) {
-    return c.json(
-      {
-        error: "Payment exceeds current balance; this would leave the member in credit",
-        balanceCents: current.balanceCents,
-        requiresConfirmation: true,
-      },
-      409
-    );
-  }
+  const invalid = assertMembers(account.id, body.userIds);
+  if (invalid) return c.json({ error: invalid }, 400);
 
-  db.insert(schema.entries)
-    .values({
-      id: nanoid(),
-      accountId: account.id,
-      userId: body.userId,
-      actorId: me.id,
-      kind: "payment",
-      amountCents: body.amountCents,
-      note: body.note,
-      createdAt: now(),
-    })
-    .run();
+  let settled = 0;
+  db.transaction(() => {
+    for (const userId of body.userIds) {
+      const { balanceCents } = balanceForUser(account.id, userId);
+      if (balanceCents <= 0) continue; // nothing owed
+      db.insert(schema.entries)
+        .values({
+          id: nanoid(),
+          accountId: account.id,
+          userId,
+          actorId: me.id,
+          kind: "payment",
+          amountCents: balanceCents,
+          note: body.note,
+          createdAt: now(),
+        })
+        .run();
+      settled++;
+    }
+  });
 
-  return c.json(balanceForUser(account.id, body.userId));
+  return c.json({ settled, skipped: body.userIds.length - settled });
 });
 
 api.post("/accounts/:slug/charges", async (c) => {
   const me = requireManager(c);
   const account = c.get("account");
+  const body = bulkMoneySchema.parse(await c.req.json());
+
+  const invalid = assertMembers(account.id, body.userIds);
+  if (invalid) return c.json({ error: invalid }, 400);
+
+  const pre = new Map(
+    body.userIds.map((id) => [id, balanceForUser(account.id, id).balanceCents])
+  );
+  db.transaction(() => {
+    for (const userId of body.userIds) {
+      db.insert(schema.entries)
+        .values({
+          id: nanoid(),
+          accountId: account.id,
+          userId,
+          actorId: me.id,
+          kind: "charge",
+          amountCents: body.amountCents,
+          note: body.note,
+          createdAt: now(),
+        })
+        .run();
+    }
+  });
+  for (const userId of body.userIds) {
+    notifyIfCrossed(
+      account.id,
+      userId,
+      pre.get(userId) ?? 0,
+      balanceForUser(account.id, userId).balanceCents
+    );
+  }
+
+  return c.json({ applied: body.userIds.length });
+});
+
+// Merge any number of members into one: every entry belonging to a source
+// member is reassigned to the target, so balances and history combine. Ghost
+// placeholders left empty by the merge are removed; registered users simply
+// end up with no tab on this account.
+api.post("/accounts/:slug/members/merge", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
   const body = z
     .object({
-      userId: z.string(),
-      amountCents: z.number().int().positive("Charge must be a positive amount"),
-      note: z.string().trim().max(500).optional(),
+      targetUserId: z.string(),
+      sourceUserIds: z.array(z.string()).min(1, "Select at least one member to merge in").max(200),
     })
     .parse(await c.req.json());
 
-  const preBalance = balanceForUser(account.id, body.userId).balanceCents;
-  db.insert(schema.entries)
-    .values({
-      id: nanoid(),
-      accountId: account.id,
-      userId: body.userId,
-      actorId: me.id,
-      kind: "charge",
-      amountCents: body.amountCents,
-      note: body.note,
-      createdAt: now(),
-    })
-    .run();
+  const sources = body.sourceUserIds.filter((id) => id !== body.targetUserId);
+  if (sources.length === 0)
+    return c.json({ error: "Pick a different member to merge into" }, 400);
 
-  const post = balanceForUser(account.id, body.userId);
-  notifyIfCrossed(account.id, body.userId, preBalance, post.balanceCents);
-  return c.json(post);
+  const invalid = assertMembers(account.id, [body.targetUserId, ...sources]);
+  if (invalid) return c.json({ error: invalid }, 400);
+
+  const preBalance = balanceForUser(account.id, body.targetUserId).balanceCents;
+
+  db.transaction(() => {
+    for (const sourceId of sources) {
+      db.update(schema.entries)
+        .set({ userId: body.targetUserId })
+        .where(
+          and(eq(schema.entries.accountId, account.id), eq(schema.entries.userId, sourceId))
+        )
+        .run();
+      // A ghost only exists to hold a tab on this account, so retire it.
+      const ghost = db
+        .select()
+        .from(schema.user)
+        .where(
+          and(
+            eq(schema.user.id, sourceId),
+            eq(schema.user.isGhost, true),
+            eq(schema.user.ghostAccountId, account.id)
+          )
+        )
+        .get();
+      if (ghost) db.delete(schema.user).where(eq(schema.user.id, ghost.id)).run();
+    }
+  });
+
+  const post = balanceForUser(account.id, body.targetUserId);
+  notifyIfCrossed(account.id, body.targetUserId, preBalance, post.balanceCents);
+  return c.json({ merged: sources.length, ...post });
 });
 
 // ---------------------------------------------------------------------------
@@ -911,6 +1050,29 @@ api.delete("/accounts/:slug/ghosts/:userId", (c) => {
   db.delete(schema.entries).where(eq(schema.entries.userId, ghost.id)).run();
   db.delete(schema.user).where(eq(schema.user.id, ghost.id)).run();
   return c.json({ ok: true });
+});
+
+// Bulk counterpart for the manager UI's multi-select.
+api.post("/accounts/:slug/ghosts/delete", async (c) => {
+  requireManager(c);
+  const account = c.get("account");
+  const { userIds } = z
+    .object({ userIds: z.array(z.string()).min(1).max(200) })
+    .parse(await c.req.json());
+
+  const ghosts = userIds
+    .map((id) => findGhost(account.id, id))
+    .filter((g): g is NonNullable<typeof g> => !!g);
+  if (ghosts.length !== userIds.length)
+    return c.json({ error: "Only ghost members of this account can be removed" }, 400);
+
+  db.transaction(() => {
+    for (const ghost of ghosts) {
+      db.delete(schema.entries).where(eq(schema.entries.userId, ghost.id)).run();
+      db.delete(schema.user).where(eq(schema.user.id, ghost.id)).run();
+    }
+  });
+  return c.json({ removed: ghosts.length });
 });
 
 // ---------------------------------------------------------------------------

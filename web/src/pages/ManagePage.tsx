@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import QRCode from "qrcode";
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -17,6 +17,30 @@ import { balanceLabel, currencyOption, money, timeAgo } from "../lib/format";
 import { Button, Card, ErrorNote, Input, Select, Spinner } from "../components/fields";
 import { ConfirmDialog, PromptDialog } from "../components/dialogs";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Tab = "members" | "activity" | "options" | "settings";
 
@@ -85,21 +109,30 @@ export default function ManagePage() {
 // ---------------------------------------------------------------------------
 
 type MemberDialog =
-  | { kind: "edit"; member: Member }
-  | { kind: "link"; member: Member }
-  | { kind: "remove"; member: Member }
+  | { kind: "payment" }
+  | { kind: "charge" }
+  | { kind: "settle" }
+  | { kind: "merge" }
+  | { kind: "remove-ghosts" }
+  | { kind: "add-ghost" }
+  | { kind: "edit-ghost"; member: Member }
+  | { kind: "link-ghost"; member: Member }
   | {
       kind: "overpay";
-      payment: { userId: string; amountCents: number; note: string };
+      userIds: string[];
+      amountCents: number;
+      note: string;
       balanceCents: number;
     }
   | null;
 
 function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
   const [members, setMembers] = useState<Member[] | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [dialog, setDialog] = useState<MemberDialog>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const currency = data.account.currency;
 
   const load = useCallback(() => {
@@ -109,6 +142,40 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
       .catch((e) => setError(e.message));
   }, [slug]);
   useEffect(load, [load]);
+
+  /** Run a manager action, then refresh and drop the selection. */
+  async function run(fn: () => Promise<unknown>, message?: string) {
+    setError("");
+    setNotice("");
+    try {
+      await fn();
+      setDialog(null);
+      setSelectedIds(new Set());
+      if (message) setNotice(message);
+      load();
+      return true;
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed");
+      return false;
+    }
+  }
+
+  if (!members) return <Spinner />;
+
+  const selected = members.filter((m) => selectedIds.has(m.id));
+  const allSelected = members.length > 0 && selected.length === members.length;
+  const onlyGhosts = selected.length > 0 && selected.every((m) => m.isGhost);
+  const owing = selected.filter((m) => m.balanceCents > 0);
+  const selectedTotal = selected.reduce((sum, m) => sum + m.balanceCents, 0);
+
+  function toggle(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function adjust(userId: string, optionId: string, action: "increment" | "decrement") {
     setError("");
@@ -120,69 +187,26 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
     }
   }
 
-  async function addGhost(name: string, email: string) {
+  async function pay(userIds: string[], amountCents: number, note: string, allowNegative = false) {
     setError("");
+    setNotice("");
     try {
-      await api.post(`/api/accounts/${slug}/ghosts`, { name, email: email || null });
-      load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed");
-    }
-  }
-
-  async function editGhost(m: Member, values: Record<string, string>) {
-    setError("");
-    try {
-      await api.patch(`/api/accounts/${slug}/ghosts/${m.id}`, {
-        name: values.name,
-        email: values.email.trim() || null,
+      await api.post(`/api/accounts/${slug}/payments`, {
+        userIds,
+        amountCents,
+        note,
+        allowNegative,
       });
-      load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed");
-    }
-  }
-
-  async function linkGhost(m: Member, email: string) {
-    setError("");
-    try {
-      await api.post(`/api/accounts/${slug}/ghosts/${m.id}/link`, { email: email.trim() });
-      load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed");
-    }
-  }
-
-  async function removeGhost(m: Member) {
-    setError("");
-    try {
-      await api.del(`/api/accounts/${slug}/ghosts/${m.id}`);
-      load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed");
-    }
-  }
-
-  async function recordCharge(userId: string, amountCents: number, note: string) {
-    setError("");
-    try {
-      await api.post(`/api/accounts/${slug}/charges`, { userId, amountCents, note });
-      load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed");
-    }
-  }
-
-  async function recordPayment(userId: string, amountCents: number, note: string) {
-    setError("");
-    try {
-      await api.post(`/api/accounts/${slug}/payments`, { userId, amountCents, note });
+      setDialog(null);
+      setSelectedIds(new Set());
       load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.data.requiresConfirmation) {
         setDialog({
           kind: "overpay",
-          payment: { userId, amountCents, note },
+          userIds,
+          amountCents,
+          note,
           balanceCents: (e.data.balanceCents as number) ?? 0,
         });
       } else {
@@ -191,125 +215,358 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
     }
   }
 
-  async function confirmOverpay(payment: { userId: string; amountCents: number; note: string }) {
-    setError("");
-    try {
-      await api.post(`/api/accounts/${slug}/payments`, { ...payment, allowNegative: true });
-      load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed");
-    }
-  }
-
-  if (!members) return <Spinner />;
-
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <ErrorNote>{error}</ErrorNote>
-      {members.length === 0 && (
-        <Card className="text-sm text-muted-foreground">
-          No tabs yet. Share the public link to get started.
-        </Card>
+      {notice && (
+        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
+          {notice}
+        </p>
       )}
-      {members.map((m) => (
-        <Card key={m.id} className="space-y-3">
-          <button
-            className="flex w-full items-center justify-between text-left"
-            onClick={() => setExpanded(expanded === m.id ? null : m.id)}
-          >
-            <div>
-              <div className="font-semibold">
-                {m.name}
-                {m.isGhost && (
-                  <Badge variant="secondary" className="ml-2">
-                    👻 ghost
-                  </Badge>
-                )}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {m.isGhost
-                  ? m.claimEmail
-                    ? `claimable by ${m.claimEmail}`
-                    : "no claim email set"
-                  : m.email}{" "}
-                · active {timeAgo(m.lastActivity)}
-              </div>
-            </div>
-            <span
-              className={`font-bold ${
-                m.balanceCents > 0 || m.unpricedCount > 0 ? "text-red-700" : "text-emerald-600 dark:text-emerald-400"
-              }`}
-            >
-              {balanceLabel(m.balanceCents, m.unpricedCount, currency)}
-            </span>
-          </button>
 
-          {expanded === m.id && (
-            <div className="space-y-3 border-t border-border pt-3">
-              {flattenItems(data.items).map((o) => (
-                <div key={o.id} className="flex items-center justify-between text-sm">
-                  <span>{o.label}</span>
-                  <span className="flex items-center gap-2">
-                    <button
-                      onClick={() => void adjust(m.id, o.id, "decrement")}
-                      disabled={(m.quantities[o.id] ?? 0) === 0}
-                      className="grid size-8 place-items-center rounded-full border border-input font-bold disabled:opacity-30"
-                    >
-                      −
-                    </button>
-                    <span className="w-6 text-center font-bold tabular-nums">
-                      {m.quantities[o.id] ?? 0}
-                    </span>
-                    <button
-                      onClick={() => void adjust(m.id, o.id, "increment")}
-                      className="grid size-8 place-items-center rounded-full bg-primary font-bold text-primary-foreground"
-                    >
-                      +
-                    </button>
-                  </span>
-                </div>
-              ))}
-              <PaymentForm
-                currency={currency}
-                balanceCents={m.balanceCents}
-                onPayment={(cents, note) => void recordPayment(m.id, cents, note)}
-                onCharge={(cents, note) => void recordCharge(m.id, cents, note)}
-              />
-              {m.isGhost && (
-                <div className="flex gap-3 text-xs">
-                  <button
-                    className="text-muted-foreground underline"
-                    onClick={() => setDialog({ kind: "edit", member: m })}
-                  >
-                    Edit ghost
-                  </button>
-                  <button
-                    className="text-muted-foreground underline"
-                    onClick={() => setDialog({ kind: "link", member: m })}
-                  >
-                    Link to user
-                  </button>
-                  <button
-                    className="text-destructive underline"
-                    onClick={() => setDialog({ kind: "remove", member: m })}
-                  >
-                    Remove ghost
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+      {members.length === 0 ? (
+        <Card className="text-sm text-muted-foreground">
+          No tabs yet. Share the account link, or add a member to backfill an existing balance.
         </Card>
-      ))}
-      <AddGhostForm onAdd={(name, email) => void addGhost(name, email)} />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground">
+              {selected.length === 0
+                ? `${members.length} member${members.length === 1 ? "" : "s"}`
+                : `${selected.length} selected · ${balanceLabel(
+                    selectedTotal,
+                    selected.reduce((s, m) => s + m.unpricedCount, 0),
+                    currency
+                  )}`}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={() => setDialog({ kind: "add-ghost" })}>
+                + Add member
+              </Button>
+              <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={selected.length === 0}
+                className="flex items-center gap-1.5 rounded-xl border border-input bg-card px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-40"
+              >
+                Actions
+                <ChevronDown className="size-3.5 opacity-70" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-52">
+                <DropdownMenuItem onClick={() => setDialog({ kind: "payment" })}>
+                  Record payment…
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDialog({ kind: "charge" })}>
+                  Add charge…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={owing.length === 0}
+                  onClick={() => setDialog({ kind: "settle" })}
+                >
+                  Settle full balance{owing.length === 1 ? "" : "s"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={selected.length < 2}
+                  onClick={() => setDialog({ kind: "merge" })}
+                >
+                  Merge members…
+                </DropdownMenuItem>
+                {selected.length === 1 && selected[0]!.isGhost && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDialog({ kind: "edit-ghost", member: selected[0]! })}
+                    >
+                      Edit placeholder…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setDialog({ kind: "link-ghost", member: selected[0]! })}
+                    >
+                      Link to registered user…
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {onlyGhosts && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => setDialog({ kind: "remove-ghosts" })}
+                    >
+                      Remove placeholder{selected.length === 1 ? "" : "s"}
+                    </DropdownMenuItem>
+                  </>
+                )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          <Card className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      aria-label="Select all members"
+                      checked={allSelected}
+                      onCheckedChange={(checked) =>
+                        setSelectedIds(
+                          checked === true ? new Set(members.map((m) => m.id)) : new Set()
+                        )
+                      }
+                    />
+                  </TableHead>
+                  <TableHead>Member</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {members.map((m) => (
+                  <Fragment key={m.id}>
+                    <TableRow data-state={selectedIds.has(m.id) ? "selected" : undefined}>
+                      <TableCell>
+                        <Checkbox
+                          aria-label={`Select ${m.name}`}
+                          checked={selectedIds.has(m.id)}
+                          onCheckedChange={() => toggle(m.id)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">
+                          {m.name}
+                          {m.isGhost && (
+                            <Badge variant="secondary" className="ml-2">
+                              placeholder
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {m.isGhost
+                            ? m.claimEmail
+                              ? `claimable by ${m.claimEmail}`
+                              : "no claim email set"
+                            : m.email}{" "}
+                          · active {timeAgo(m.lastActivity)}
+                        </div>
+                      </TableCell>
+                      <TableCell
+                        className={`text-right font-bold ${
+                          m.balanceCents > 0 || m.unpricedCount > 0
+                            ? "text-destructive"
+                            : "text-emerald-600 dark:text-emerald-400"
+                        }`}
+                      >
+                        {balanceLabel(m.balanceCents, m.unpricedCount, currency)}
+                      </TableCell>
+                      <TableCell>
+                        <button
+                          aria-label={`${expanded === m.id ? "Hide" : "Show"} ${m.name}'s items`}
+                          onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          {expanded === m.id ? (
+                            <ChevronUp className="size-4" />
+                          ) : (
+                            <ChevronDown className="size-4" />
+                          )}
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                    {expanded === m.id && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="bg-muted/40">
+                          <div className="space-y-2">
+                            {flattenItems(data.items).map((o) => (
+                              <div
+                                key={o.id}
+                                className="flex items-center justify-between text-sm"
+                              >
+                                <span>{o.label}</span>
+                                <span className="flex items-center gap-2">
+                                  <button
+                                    aria-label={`Remove one ${o.label} from ${m.name}`}
+                                    onClick={() => void adjust(m.id, o.id, "decrement")}
+                                    disabled={(m.quantities[o.id] ?? 0) === 0}
+                                    className="grid size-8 place-items-center rounded-full border border-input font-bold disabled:opacity-30"
+                                  >
+                                    −
+                                  </button>
+                                  <span className="w-6 text-center font-bold tabular-nums">
+                                    {m.quantities[o.id] ?? 0}
+                                  </span>
+                                  <button
+                                    aria-label={`Add one ${o.label} to ${m.name}`}
+                                    onClick={() => void adjust(m.id, o.id, "increment")}
+                                    className="grid size-8 place-items-center rounded-full bg-primary font-bold text-primary-foreground"
+                                  >
+                                    +
+                                  </button>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </>
+      )}
+
+      {members.length === 0 && (
+        <Button variant="secondary" onClick={() => setDialog({ kind: "add-ghost" })}>
+          + Add member
+        </Button>
+      )}
 
       <PromptDialog
-        open={dialog?.kind === "edit"}
+        open={dialog?.kind === "add-ghost"}
         onOpenChange={(o) => !o && setDialog(null)}
-        title="Edit ghost member"
+        title="Add a member"
+        description="Adds a placeholder for someone who hasn't signed up yet, so you can backfill their tab now. If you set their email, the tab transfers to them automatically when they register."
+        fields={[
+          { name: "name", label: "Name", placeholder: "Sam", required: true },
+          {
+            name: "email",
+            label: "Email they'll sign up with (optional)",
+            type: "email",
+            placeholder: "sam@example.com",
+          },
+        ]}
+        submitLabel="Add member"
+        onSubmit={(values) =>
+          void run(() =>
+            api.post(`/api/accounts/${slug}/ghosts`, {
+              name: values.name.trim(),
+              email: values.email.trim() || null,
+            })
+          )
+        }
+      />
+
+      {/* Bulk money actions */}
+      <PromptDialog
+        open={dialog?.kind === "payment"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={`Record payment${selected.length > 1 ? "s" : ""}`}
+        description={
+          selected.length > 1
+            ? `This records the same payment against each of the ${selected.length} selected members.`
+            : undefined
+        }
+        fields={[
+          { name: "amount", label: `Amount (${currency})`, type: "number", required: true },
+          { name: "note", label: "Note (optional)", placeholder: "e-transfer, cash…" },
+        ]}
+        submitLabel="Record"
+        onSubmit={(values) => {
+          const cents = parsePrice(values.amount);
+          if (!cents) return;
+          void pay(selected.map((m) => m.id), cents, values.note);
+        }}
+      />
+      <PromptDialog
+        open={dialog?.kind === "charge"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={`Add charge${selected.length > 1 ? "s" : ""}`}
+        description={
+          selected.length > 1
+            ? `This adds the same charge to each of the ${selected.length} selected members.`
+            : "Use this to backfill a balance or add a one-off cost."
+        }
+        fields={[
+          { name: "amount", label: `Amount (${currency})`, type: "number", required: true },
+          { name: "note", label: "Note (optional)", placeholder: "backfill, deposit…" },
+        ]}
+        submitLabel="Add charge"
+        onSubmit={(values) => {
+          const cents = parsePrice(values.amount);
+          if (!cents) return;
+          void run(
+            () =>
+              api.post(`/api/accounts/${slug}/charges`, {
+                userIds: selected.map((m) => m.id),
+                amountCents: cents,
+                note: values.note,
+              }),
+            `Charged ${money(cents, currency)} to ${selected.length} member${
+              selected.length === 1 ? "" : "s"
+            }.`
+          );
+        }}
+      />
+      <ConfirmDialog
+        open={dialog?.kind === "settle"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={`Settle ${owing.length} balance${owing.length === 1 ? "" : "s"}?`}
+        description={`This records a payment matching each member's current balance, totalling ${money(
+          owing.reduce((sum, m) => sum + m.balanceCents, 0),
+          currency
+        )}. Members who owe nothing are skipped.`}
+        confirmLabel="Settle up"
+        onConfirm={() =>
+          void run(
+            () =>
+              api.post(`/api/accounts/${slug}/members/settle`, {
+                userIds: owing.map((m) => m.id),
+              }),
+            "Balances settled."
+          )
+        }
+      />
+      <ConfirmDialog
+        open={dialog?.kind === "overpay"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title="Payment is more than the balance"
+        description={
+          dialog?.kind === "overpay"
+            ? `At least one selected member owes less than ${money(
+                dialog.amountCents,
+                currency
+              )} (one has ${money(
+                dialog.balanceCents,
+                currency
+              )}). Recording it will leave them in credit.`
+            : ""
+        }
+        confirmLabel="Record anyway"
+        onConfirm={() => {
+          if (dialog?.kind !== "overpay") return;
+          void pay(dialog.userIds, dialog.amountCents, dialog.note, true);
+        }}
+      />
+
+      <MergeDialog
+        open={dialog?.kind === "merge"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        members={selected}
+        currency={currency}
+        onMerge={(targetUserId) =>
+          void run(
+            () =>
+              api.post(`/api/accounts/${slug}/members/merge`, {
+                targetUserId,
+                sourceUserIds: selected.map((m) => m.id).filter((id) => id !== targetUserId),
+              }),
+            "Members merged."
+          )
+        }
+      />
+
+      {/* Placeholder-member actions */}
+      <PromptDialog
+        open={dialog?.kind === "edit-ghost"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title="Edit placeholder member"
         description="If you set an email, their tab transfers automatically when that email registers."
         fields={
-          dialog?.kind === "edit"
+          dialog?.kind === "edit-ghost"
             ? [
                 { name: "name", label: "Name", defaultValue: dialog.member.name, required: true },
                 {
@@ -321,13 +578,23 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
               ]
             : []
         }
-        onSubmit={(values) => dialog?.kind === "edit" && void editGhost(dialog.member, values)}
+        onSubmit={(values) => {
+          if (dialog?.kind !== "edit-ghost") return;
+          void run(() =>
+            api.patch(`/api/accounts/${slug}/ghosts/${dialog.member.id}`, {
+              name: values.name,
+              email: values.email.trim() || null,
+            })
+          );
+        }}
       />
       <PromptDialog
-        open={dialog?.kind === "link"}
+        open={dialog?.kind === "link-ghost"}
         onOpenChange={(o) => !o && setDialog(null)}
-        title={dialog?.kind === "link" ? `Link "${dialog.member.name}" to a user` : ""}
-        description="Their tab — balance and full history — will transfer to the registered user's account, and the ghost will be removed."
+        title={
+          dialog?.kind === "link-ghost" ? `Link "${dialog.member.name}" to a user` : ""
+        }
+        description="Their tab — balance and full history — transfers to the registered user's account, and the placeholder is removed."
         fields={[
           {
             name: "email",
@@ -338,165 +605,96 @@ function MembersTab({ slug, data }: { slug: string; data: AccountPageData }) {
           },
         ]}
         submitLabel="Link"
-        onSubmit={(values) => dialog?.kind === "link" && void linkGhost(dialog.member, values.email)}
+        onSubmit={(values) => {
+          if (dialog?.kind !== "link-ghost") return;
+          void run(() =>
+            api.post(`/api/accounts/${slug}/ghosts/${dialog.member.id}/link`, {
+              email: values.email.trim(),
+            })
+          );
+        }}
       />
       <ConfirmDialog
-        open={dialog?.kind === "remove"}
+        open={dialog?.kind === "remove-ghosts"}
         onOpenChange={(o) => !o && setDialog(null)}
-        title="Remove ghost member?"
-        description={
-          dialog?.kind === "remove"
-            ? `This deletes "${dialog.member.name}" and their entire tab history. This cannot be undone.`
-            : ""
-        }
+        title={`Remove ${selected.length} placeholder${selected.length === 1 ? "" : "s"}?`}
+        description={`This deletes ${
+          selected.length === 1 ? `"${selected[0]?.name}"` : "these placeholder members"
+        } and their entire tab history. This cannot be undone.`}
         confirmLabel="Remove"
         destructive
-        onConfirm={() => dialog?.kind === "remove" && void removeGhost(dialog.member)}
-      />
-      <ConfirmDialog
-        open={dialog?.kind === "overpay"}
-        onOpenChange={(o) => !o && setDialog(null)}
-        title="Record payment above balance?"
-        description={
-          dialog?.kind === "overpay"
-            ? `This payment is more than their current balance (${money(
-                dialog.balanceCents,
-                currency
-              )}). Recording it will leave them in credit.`
-            : ""
+        onConfirm={() =>
+          void run(() =>
+            api.post(`/api/accounts/${slug}/ghosts/delete`, {
+              userIds: selected.map((m) => m.id),
+            })
+          )
         }
-        confirmLabel="Record anyway"
-        onConfirm={() => dialog?.kind === "overpay" && void confirmOverpay(dialog.payment)}
       />
     </div>
   );
 }
 
-function AddGhostForm({ onAdd }: { onAdd: (name: string, email: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+/** Pick which of the selected members absorbs the others' tabs. */
+function MergeDialog({
+  open,
+  onOpenChange,
+  members,
+  currency,
+  onMerge,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  members: Member[];
+  currency: string;
+  onMerge: (targetUserId: string) => void;
+}) {
+  const [target, setTarget] = useState("");
+  const effectiveTarget = target && members.some((m) => m.id === target) ? target : members[0]?.id;
 
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} className="text-sm text-muted-foreground underline">
-        + Add a ghost member (someone who hasn't signed up yet)
-      </button>
-    );
-  }
+  const total = members.reduce((sum, m) => sum + m.balanceCents, 0);
+  const unpriced = members.reduce((sum, m) => sum + m.unpricedCount, 0);
 
   return (
-    <Card>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onAdd(name.trim(), email.trim());
-          setName("");
-          setEmail("");
-          setOpen(false);
-        }}
-        className="space-y-2"
-      >
-        <p className="text-sm text-muted-foreground">
-          Ghost members let you backfill a tab for someone before they register. If you set
-          their email, the tab transfers to them automatically when they sign up with it.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <div className="min-w-40 flex-1">
-            <Input
-              label="Name"
-              required
-              placeholder="Dave"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="min-w-40 flex-1">
-            <Input
-              label="Email (optional)"
-              type="email"
-              placeholder="dave@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Merge {members.length} members</DialogTitle>
+          <DialogDescription>
+            Every entry from the other members moves onto the member you pick, combining their
+            balances and history. Placeholder members left empty are removed; registered users
+            keep their login and simply have no tab here afterwards.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Select
+            label="Merge into"
+            options={members.map((m) => ({
+              value: m.id,
+              label: `${m.name} · ${balanceLabel(m.balanceCents, m.unpricedCount, currency)}`,
+            }))}
+            value={effectiveTarget ?? ""}
+            onValueChange={setTarget}
+          />
+          <p className="rounded-lg bg-muted px-3 py-2 text-sm">
+            Combined balance:{" "}
+            <strong>{balanceLabel(total, unpriced, currency)}</strong>
+          </p>
         </div>
-        <div className="flex gap-2">
-          <Button type="submit">Add ghost</Button>
-          <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-        </div>
-      </form>
-    </Card>
-  );
-}
-
-function PaymentForm({
-  currency,
-  balanceCents,
-  onPayment,
-  onCharge,
-}: {
-  currency: string;
-  balanceCents: number;
-  onPayment: (cents: number, note: string) => void;
-  onCharge: (cents: number, note: string) => void;
-}) {
-  const [amount, setAmount] = useState("");
-  const [note, setNote] = useState("");
-
-  function submit(handler: (cents: number, note: string) => void) {
-    const cents = Math.round(parseFloat(amount) * 100);
-    if (!Number.isFinite(cents) || cents <= 0) return;
-    handler(cents, note);
-    setAmount("");
-    setNote("");
-  }
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        submit(onPayment);
-      }}
-      className="flex flex-wrap items-end gap-2 rounded-xl bg-muted/50 p-3"
-    >
-      <div className="w-28">
-        <Input
-          label="Amount"
-          type="number"
-          step="0.01"
-          min="0.01"
-          placeholder="0.00"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
-      </div>
-      <div className="min-w-32 flex-1">
-        <Input
-          label="Note"
-          placeholder="Venmo, cash, backfill…"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
-      </div>
-      <Button type="submit" variant="secondary">
-        Record payment
-      </Button>
-      <Button type="button" variant="secondary" onClick={() => submit(onCharge)}>
-        Add charge
-      </Button>
-      {balanceCents > 0 && (
-        <button
-          type="button"
-          className="text-xs text-muted-foreground underline"
-          onClick={() => setAmount((balanceCents / 100).toFixed(2))}
-        >
-          settle {money(balanceCents, currency)}
-        </button>
-      )}
-    </form>
+          <Button
+            type="button"
+            disabled={!effectiveTarget}
+            onClick={() => effectiveTarget && onMerge(effectiveTarget)}
+          >
+            Merge
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
