@@ -37,11 +37,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          BUMP=$(npx -y conventional-recommended-bump -p conventionalcommits)
+          # The conventionalcommits preset ships separately from both CLIs.
+          BUMP=$(npx -y -p conventional-recommended-bump -p conventional-changelog-conventionalcommits \
+            conventional-recommended-bump -p conventionalcommits)
           echo "Recommended bump: $BUMP"
           VERSION=$(npm version "$BUMP" --no-git-tag-version)
           touch CHANGELOG.md
-          npx -y conventional-changelog-cli -p conventionalcommits -i CHANGELOG.md -s
+          npx -y -p conventional-changelog-cli -p conventional-changelog-conventionalcommits \
+            conventional-changelog -p conventionalcommits -i CHANGELOG.md -s
           git add package.json package-lock.json CHANGELOG.md
           git commit -m "chore: release ${VERSION}"
           git push origin develop
